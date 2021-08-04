@@ -1,6 +1,7 @@
 import { getUserWalletConfig } from "@config/app"
 
 import { getCurrentPrice } from "@services/realtime-price"
+import liquidityProviders from "@services/liquidity-providers"
 import { User } from "@services/mongoose/schema"
 
 import { NotFoundError } from "./error"
@@ -14,6 +15,8 @@ export const WalletFactory = async ({
   user: typeof User
   logger: Logger
 }) => {
+  // TODO: we need a place to initialize providers outside the core
+  liquidityProviders.setupLiquidityProviders()
   // FIXME: update price on event outside of the wallet factory
   const lastPrice = await getCurrentPrice()
   UserWallet.setCurrentPrice(lastPrice)

@@ -4,6 +4,7 @@ interface IAddInvoiceRequest {
   value: number
   memo: string | undefined
   selfGenerated?: boolean
+  currency: string
 }
 
 interface IFeeRequest {

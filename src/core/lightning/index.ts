@@ -38,6 +38,7 @@ import { lockExtendOrThrow, redlock } from "../lock"
 import { transactionNotification } from "../notifications/payment"
 import { UserWallet } from "../user-wallet"
 import { addContact, isInvoiceAlreadyPaidError, LoggedError, timeout } from "../utils"
+import liquidityProvider from "@core/liquidity-provider"
 
 export type ITxType =
   | "invoice"
@@ -85,14 +86,11 @@ export const LightningMixin = (superclass) =>
       value,
       memo,
       selfGenerated = true,
+      currency = "BTC",
     }: IAddInvoiceRequest): Promise<string> {
       if (!!value && value < 0) {
         throw new Error("value can't be negative")
       }
-
-      let request, id, input
-
-      const expires_at = this.getExpiration(moment()).toDate()
 
       let lnd: AuthenticatedLnd, pubkey: string
 
@@ -102,10 +100,25 @@ export const LightningMixin = (superclass) =>
         throw new LndOfflineError("no active lnd to create an invoice")
       }
 
+      let request, id, input, liquidity
+
       try {
+        liquidity = await liquidityProvider.checkLiquidity({
+          currency,
+          amount: value,
+        })
+
+        this.logger.info({ liquidity }, "checkLiquidity")
+
+        if (!liquidity) {
+          throw new Error(`No liquidity for ${currency}`)
+        }
+
+        const expires_at = moment.unix(liquidity.expiresAt).toDate()
+
         input = {
           lnd,
-          tokens: value,
+          tokens: liquidity.amount,
           expires_at,
         }
 
@@ -137,7 +150,15 @@ export const LightningMixin = (superclass) =>
         }).save()
 
         this.logger.info(
-          { pubkey, result, value, memo, selfGenerated, id, user: this.user },
+          {
+            pubkey,
+            result,
+            value: liquidity.amount,
+            memo,
+            selfGenerated,
+            id,
+            user: this.user,
+          },
           "a new invoice has been added",
         )
       } catch (err) {
