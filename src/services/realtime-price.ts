@@ -12,7 +12,7 @@ const key = "realtimePrice"
 const client = new protoDescriptor.PriceFeed(fullUrl, credentials.createInsecure())
 
 // TODO: pass logger for better logging
-export const getCurrentPrice = async (): Promise<number | undefined> => {
+export const getCurrentPrice = async (): Promise<number> => {
   // keep price in cache for 1 min in case the price pod is not online
 
   let price

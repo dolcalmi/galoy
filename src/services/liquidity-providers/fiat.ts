@@ -1,5 +1,6 @@
 import moment from "moment"
 import { IProvider } from "@core/liquidity-provider/provider"
+import { getCurrentPrice } from "@services/realtime-price"
 
 export default function (currency): IProvider {
   if (!currency) {
@@ -17,13 +18,12 @@ export default function (currency): IProvider {
       const date = moment()
       const expiresAt = date.add(2, "minutes").unix()
       // TODO: query/resolve from dealer
-      const price = 0.0003984
-      return Promise.resolve({
+      return getCurrentPrice().then((price) => ({
         id: `${date.unix()}`,
         amount: Math.ceil(amount / price),
         price,
         expiresAt,
-      })
+      }))
     },
   }
 }
