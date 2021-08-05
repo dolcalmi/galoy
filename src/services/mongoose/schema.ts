@@ -6,6 +6,8 @@ import { accountPath } from "@core/ledger/accounts"
 import { Transaction } from "@core/ledger/schema"
 import { baseLogger } from "../logger"
 import { caseInsensitiveRegex } from "@core/utils"
+import repositories from "@core/repositories"
+import invoiceWalletRepo from "./invoice-wallet"
 
 export { Transaction }
 
@@ -446,3 +448,9 @@ const priceHistorySchema = new Schema({
 })
 
 export const PriceHistory = mongoose.model("PriceHistory", priceHistorySchema)
+
+// Initialize core repositories
+
+repositories.initialize({
+  invoiceWalletRepo,
+})

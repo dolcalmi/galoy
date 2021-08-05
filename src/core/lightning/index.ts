@@ -38,6 +38,8 @@ import { lockExtendOrThrow, redlock } from "../lock"
 import { transactionNotification } from "../notifications/payment"
 import { UserWallet } from "../user-wallet"
 import { addContact, isInvoiceAlreadyPaidError, LoggedError, timeout } from "../utils"
+import repositories from "@core/repositories"
+import { IInvoiceWalletRepository } from "@core/repositories/invoice-wallet"
 
 export type ITxType =
   | "invoice"
@@ -60,10 +62,12 @@ export const delay = (currency) => {
 export const LightningMixin = (superclass) =>
   class extends superclass {
     readonly config: UserWalletConfig
+    readonly invoiceWalletRepo: IInvoiceWalletRepository
 
     constructor(...args) {
       super(...args)
       this.config = args[0].config
+      this.invoiceWalletRepo = repositories.getInvoiceWalletRepo()
     }
 
     async updatePending(lock) {
@@ -90,7 +94,7 @@ export const LightningMixin = (superclass) =>
         throw new Error("value can't be negative")
       }
 
-      let request, id, input
+      let request, id: string, input
 
       const expires_at = this.getExpiration(moment()).toDate()
 
@@ -120,32 +124,23 @@ export const LightningMixin = (superclass) =>
           input["description_hash"] = description_hash
         }
 
-        const result = await createInvoice(input)
-        request = result.request
-        id = result.id
+        ;({ id, request } = await createInvoice(input))
       } catch (err) {
         const error = "impossible to create the invoice"
         throw new LoggedError(error)
       }
 
-      try {
-        const result = await new InvoiceUser({
-          _id: id,
-          uid: this.user.id,
-          selfGenerated,
-          pubkey,
-        }).save()
+      const result = await this.invoiceWalletRepo.create({
+        id,
+        walletId: String(this.user.id),
+        selfGenerated,
+        pubkey,
+      })
 
-        this.logger.info(
-          { pubkey, result, value, memo, selfGenerated, id, user: this.user },
-          "a new invoice has been added",
-        )
-      } catch (err) {
-        // FIXME if the mongodb connection has not been instantiated
-        // this fails silently
-        const error = `error storing invoice to db`
-        throw new DbError(error, { logger: this.logger, level: "error" })
-      }
+      this.logger.info(
+        { pubkey, result, value, memo, selfGenerated, id, user: this.user },
+        "a new invoice has been added",
+      )
 
       return request
     }
