@@ -138,6 +138,6 @@ describe("lndUtils", () => {
       timestamp: { $lt: queryDate },
     })
     const result = await deleteExpiredInvoiceUser()
-    expect(result.deletedCount).toBe(invoicesCount)
+    expect(result).toBe(invoicesCount)
   })
 })

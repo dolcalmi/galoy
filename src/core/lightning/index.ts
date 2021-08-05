@@ -21,7 +21,7 @@ import {
 } from "@services/lnd/utils"
 import { ledger } from "@services/mongodb"
 import { redis } from "@services/redis"
-import { InvoiceUser, User } from "@services/mongoose/schema"
+import { User } from "@services/mongoose/schema"
 
 import {
   DbError,
@@ -311,7 +311,7 @@ export const LightningMixin = (superclass) =>
             } else {
               // standard path, user scan a lightning invoice of our own wallet from another user
 
-              const payeeInvoice = await InvoiceUser.findOne({ _id: id })
+              const payeeInvoice = await this.invoiceWalletRepo.findById(id)
               if (!payeeInvoice) {
                 const error = `User tried to pay invoice from ${this.config.name}, but it does not exist`
                 throw new LightningPaymentError(error, {
@@ -329,7 +329,7 @@ export const LightningMixin = (superclass) =>
               }
 
               ;({ pubkey } = payeeInvoice)
-              payeeUser = await User.findOne({ _id: payeeInvoice.uid })
+              payeeUser = await User.findOne({ _id: payeeInvoice.walletId })
             }
 
             if (!payeeUser) {
@@ -389,10 +389,7 @@ export const LightningMixin = (superclass) =>
                 await cancelHodlInvoice({ lnd, id })
                 this.logger.info({ id, user: this.user }, "canceling invoice on lnd")
 
-                const resultUpdate = await InvoiceUser.updateOne(
-                  { _id: id },
-                  { paid: true },
-                )
+                const resultUpdate = await this.invoiceWalletRepo.confirm(id)
                 this.logger.info(
                   { id, user: this.user, resultUpdate },
                   "invoice has been updated from InvoiceUser following on_us transaction",
@@ -777,7 +774,7 @@ export const LightningMixin = (superclass) =>
       // so not need for a round back trip to mongodb
       if (!pubkeyCached) {
         let paid: boolean
-        const invoiceUser = await InvoiceUser.findOne({ _id: hash })
+        const invoiceUser = await this.invoiceWalletRepo.findById(hash)
 
         if (!invoiceUser) {
           this.logger.info({ hash }, "invoiceUser doesn't exist")
@@ -806,7 +803,7 @@ export const LightningMixin = (superclass) =>
 
       if (!invoice) {
         try {
-          await InvoiceUser.deleteOne({ _id: hash, uid: this.user._id })
+          await this.invoiceWalletRepo.deleteById(hash)
         } catch (err) {
           this.logger.error({ invoice }, "impossible to delete InvoiceUser entry")
         }
@@ -831,10 +828,7 @@ export const LightningMixin = (superclass) =>
           let invoiceUser
 
           try {
-            invoiceUser = await InvoiceUser.findOne({
-              _id: hash,
-              uid: this.user._id,
-            })
+            invoiceUser = await this.invoiceWalletRepo.findById(hash)
           } catch (err) {
             throw new DbError(`issue getting invoiceUser`, {
               logger: this.logger,
@@ -862,10 +856,7 @@ export const LightningMixin = (superclass) =>
             // OR: use a an unique index account / hash / voided
             // may still not avoid issue from discrenpency between hash and the books
 
-            const resultUpdate = await InvoiceUser.updateOne(
-              { _id: hash, uid: this.user._id },
-              { paid: true },
-            )
+            const resultUpdate = await this.invoiceWalletRepo.confirm(hash)
             this.logger.info(
               { hash, user: this.user, resultUpdate },
               "invoice has been updated from InvoiceUser following on_us transaction",
@@ -917,13 +908,13 @@ export const LightningMixin = (superclass) =>
     }
 
     async updatePendingInvoices(lock) {
-      // TODO
-      // const currency = "BTC"
+      const invoices = await this.invoiceWalletRepo.findPendingByWalletId(this.user._id)
 
-      const invoices = await InvoiceUser.find({ uid: this.user._id, paid: false })
-
-      for (const { _id: hash, pubkey: pubkeyCached } of invoices) {
-        await this.updatePendingInvoice({ hash, lock, pubkeyCached })
+      for (const invoice of invoices) {
+        if (invoice) {
+          const { id: hash, pubkey: pubkeyCached } = invoice
+          await this.updatePendingInvoice({ hash, lock, pubkeyCached })
+        }
       }
     }
   }
