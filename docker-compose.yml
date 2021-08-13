@@ -1,5 +1,10 @@
 version: "2"
 services:
+  price:
+    build: https://github.com/GaloyMoney/price.git#main
+    ports:
+    - "50051:50051"
+    - "9464:9464"
   redis:
     image: bitnami/redis:6.2
     ports:

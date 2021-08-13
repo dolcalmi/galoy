@@ -7,6 +7,9 @@ start-deps:
 start: start-deps
 	. ./.envrc && yarn tsnd --respawn --files -r tsconfig-paths/register src/servers/graphql-main-server.ts | yarn pino-pretty -c -l
 
+trigger: start-deps
+	. ./.envrc && yarn tsnd --respawn --files -r tsconfig-paths/register src/servers/trigger.ts | yarn pino-pretty -c -l
+
 start-admin: start-deps
 	. ./.envrc && yarn tsnd --respawn --files -r tsconfig-paths/register src/servers/graphql-admin-server.ts | yarn pino-pretty -c -l
 
