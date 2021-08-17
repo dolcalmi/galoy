@@ -9,7 +9,7 @@ import {
 import lnService from "ln-service"
 
 import { TIMEOUT_PAYMENT } from "@services/lnd/auth"
-import { InvoicesRepository } from "@services/mongoose"
+import { WalletInvoicesRepository } from "@services/mongoose"
 import {
   getActiveLnd,
   getInvoiceAttempt,
@@ -52,7 +52,7 @@ export const LightningMixin = (superclass) =>
     constructor(...args) {
       super(...args)
       this.config = args[0].config
-      this.invoices = InvoicesRepository()
+      this.invoices = WalletInvoicesRepository()
     }
 
     async updatePending(lock) {

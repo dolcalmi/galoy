@@ -5,20 +5,20 @@ import { ledger } from "@services/mongodb"
 
 import { WalletFactory } from "./wallet-factory"
 import { runInParallel } from "./utils"
-import { WalletInvoicesRepository } from "@services/mongoose/wallet-invoices"
+import { WalletInvoicesRepository } from "@services/mongoose"
 import { RepositoryError } from "@domain/errors"
 import { User } from "@services/mongoose/schema"
 
 const logger = baseLogger.child({ module: "balanceSheet" })
 
-const isError = (obj): boolean => obj instanceof RepositoryError
+const isRepoError = (obj): boolean => obj instanceof RepositoryError
 
 const updatePendingLightningInvoices = async () => {
   const walletInvoicesRepo = WalletInvoicesRepository()
 
   const walletsWithPendingInvoices = walletInvoicesRepo.findWalletsWithPendingInvoices()
 
-  if (isError(walletsWithPendingInvoices)) {
+  if (isRepoError(walletsWithPendingInvoices)) {
     logger.error(
       { error: walletsWithPendingInvoices },
       "finish updating pending invoices with error",
