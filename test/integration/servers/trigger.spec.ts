@@ -1,4 +1,4 @@
-import { onchainBlockEventhandler } from "@servers/trigger"
+import { onchainBlockEventhandler, onInvoiceUpdate } from "@servers/trigger"
 import {
   getUserWallet,
   bitcoindClient,
@@ -10,14 +10,31 @@ import {
   waitFor,
   sendToAddressAndConfirm,
   mineBlockAndSyncAll,
+  lndOutside1,
+  pay,
+  getInvoice,
 } from "test/helpers"
 import * as Wallets from "@app/wallets"
+import { toSats } from "@domain/bitcoin"
+import { addInvoiceForSelf } from "@app/wallets"
+import { getHash } from "@core/utils"
+import { ledger } from "@services/mongodb"
+import { getTitle } from "@core/notifications/payment"
+import { getCurrentPrice } from "@services/realtime-price"
 
+jest.mock("@core/notifications/notification")
 jest.mock("@services/realtime-price", () => require("test/mocks/realtime-price"))
 jest.mock("@services/phone-provider", () => require("test/mocks/phone-provider"))
 
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { sendNotification } = require("@core/notifications/notification")
+
 beforeAll(async () => {
   await bitcoindClient.loadWallet({ filename: "outside" })
+})
+
+beforeEach(() => {
+  jest.resetAllMocks()
 })
 
 afterAll(async () => {
@@ -26,7 +43,7 @@ afterAll(async () => {
 })
 
 describe("onchainBlockEventhandler", () => {
-  it("should process block incoming transactions", async () => {
+  it("should process block for incoming transactions", async () => {
     const amount = 0.0001
     const blocksToMine = 6
     const wallet = await getUserWallet(0)
@@ -80,5 +97,34 @@ describe("onchainBlockEventhandler", () => {
 
     const { BTC: balance } = await wallet.getBalances()
     expect(balance).toBe(initialBalance + finalAmount)
+  })
+
+  it("should process pending invoices on invoice update event", async () => {
+    const sats = 500
+    const wallet = await getUserWallet(12)
+    const lnInvoice = await addInvoiceForSelf({
+      walletId: wallet.user.id as WalletId,
+      amount: toSats(sats),
+    })
+    expect(lnInvoice).not.toBeInstanceOf(Error)
+
+    const { paymentRequest: request } = lnInvoice as LnInvoice
+    await pay({ lnd: lndOutside1, request })
+
+    const hash = getHash(request)
+    const invoice = await getInvoice({ id: hash, lnd: lnd1 })
+    await onInvoiceUpdate(invoice)
+
+    const dbTx = await ledger.getTransactionByHash(hash)
+    expect(dbTx.sats).toBe(sats)
+    expect(dbTx.pending).toBe(false)
+
+    const satsPrice = (await getCurrentPrice()) || 1
+    const usd = (sats * satsPrice).toFixed(2)
+    expect(sendNotification.mock.calls[0][0].title).toBe(
+      getTitle["paid-invoice"]({ usd, amount: sats }),
+    )
+    expect(sendNotification.mock.calls[0][0].user._id).toStrictEqual(wallet.user._id)
+    expect(sendNotification.mock.calls[0][0].data.type).toBe("paid-invoice")
   })
 })

@@ -23,13 +23,11 @@ import { getOnChainTransactions } from "@core/on-chain"
 import { runInParallel } from "@core/utils"
 import { ONCHAIN_MIN_CONFIRMATIONS } from "@config/app"
 import { WalletInvoicesRepository } from "@services/mongoose"
-import { RepositoryError } from "@domain/errors"
+import { isRepoError } from "@domain/utils"
 
 const logger = baseLogger.child({ module: "trigger" })
 
 const txsReceived = new Set()
-
-const isRepoError = (obj): boolean => obj instanceof RepositoryError
 
 export const uploadBackup = async ({ backup, pubkey }) => {
   logger.debug({ backup }, "updating scb on dbx")
@@ -182,14 +180,14 @@ export const onInvoiceUpdate = async (invoice) => {
   }
 
   const walletInvoicesRepo = WalletInvoicesRepository()
-  const invoiceWallet = await walletInvoicesRepo.findByPaymentHash(invoice.id)
+  const walletInvoice = await walletInvoicesRepo.findByPaymentHash(invoice.id)
 
-  if (isRepoError(invoiceWallet)) {
+  if (isRepoError(walletInvoice)) {
     logger.fatal({ invoice }, "we received an invoice but had no user attached to it")
     return
   }
 
-  const { walletId, paymentHash: hash, pubkey } = invoice
+  const { walletId, paymentHash: hash, pubkey } = walletInvoice as WalletInvoice
   const user = await User.findOne({ _id: walletId })
   const wallet = await WalletFactory({ user, logger })
   await wallet.updatePendingInvoice({ hash, pubkey })
