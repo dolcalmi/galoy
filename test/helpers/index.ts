@@ -45,10 +45,10 @@ export const generateTokenHelper = ({ secret }) => {
   fail("generateToken returned null")
 }
 
-export const enable2FA = async ({ wallet }) => {
-  if (!wallet.user.twoFactorEnabled) {
-    const { secret } = wallet.generate2fa()
+export const enableTwoFA = async ({ wallet }) => {
+  if (!wallet.user.twoFAEnabled) {
+    const { secret } = wallet.generateTwoFA()
     const token = generateTokenHelper({ secret })
-    await wallet.save2fa({ secret, token })
+    await wallet.saveTwoFA({ secret, token })
   }
 }

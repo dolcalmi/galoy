@@ -70,7 +70,7 @@ const resolvers = {
         username,
         contacts,
         language,
-        twoFactorEnabled: user.twoFactorEnabled,
+        twoFAEnabled: user.twoFAEnabled,
       }
     },
 
@@ -206,10 +206,10 @@ const resolvers = {
     login: async (_, { phone, code }, { logger, ip }) => ({
       token: await login({ phone, code, logger, ip }),
     }),
-    generate2fa: async (_, __, { wallet }) => await wallet.generate2fa(),
-    save2fa: async (_, { secret, token }, { wallet }) =>
-      await wallet.save2fa({ secret, token }),
-    delete2fa: async (_, { token }, { wallet }) => await wallet.delete2fa({ token }),
+    generateTwoFA: async (_, __, { wallet }) => wallet.generateTwoFA(),
+    saveTwoFA: async (_, { secret, token }, { wallet }) =>
+      wallet.saveTwoFA({ secret, token }),
+    deleteTwoFA: async (_, { token }, { wallet }) => wallet.deleteTwoFA({ token }),
     updateUser: (_, __, { wallet }) => ({
       setUsername: async ({ username }) => wallet.setUsername({ username }),
       setLanguage: async ({ language }) => wallet.setLanguage({ language }),
@@ -314,9 +314,9 @@ export async function startApolloServerForOldSchema() {
         getLevels: and(isAuthenticated, isEditor),
       },
       Mutation: {
-        generate2fa: isAuthenticated,
-        delete2fa: isAuthenticated,
-        save2fa: isAuthenticated,
+        generateTwoFA: isAuthenticated,
+        deleteTwoFA: isAuthenticated,
+        saveTwoFA: isAuthenticated,
         onchain: isAuthenticated,
         invoice: isAuthenticated,
         earnCompleted: isAuthenticated,
