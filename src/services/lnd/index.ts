@@ -4,8 +4,16 @@ import {
   UnknownLightningServiceError,
 } from "@domain/bitcoin/lightning"
 import { createInvoice } from "lightning"
+import { getActiveLnd } from "./utils"
 
-export const LndService = (lndAuth: AuthenticatedLnd): ILightningService => {
+export const LndService = (): ILightningService | LightningServiceError => {
+  let lndAuth: AuthenticatedLnd, pubkey: string
+  try {
+    ;({ lnd: lndAuth, pubkey } = getActiveLnd())
+  } catch (err) {
+    return new UnknownLightningServiceError(err)
+  }
+
   const registerInvoice = async ({
     satoshis,
     description,
@@ -24,7 +32,7 @@ export const LndService = (lndAuth: AuthenticatedLnd): ILightningService => {
       if (returnedInvoice instanceof Error) {
         return new CouldNotDecodeReturnedPaymentRequest(returnedInvoice.message)
       }
-      return { invoice: returnedInvoice } as RegisteredInvoice
+      return { invoice: returnedInvoice, pubkey } as RegisteredInvoice
     } catch (err) {
       return new UnknownLightningServiceError(err)
     }

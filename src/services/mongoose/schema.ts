@@ -14,7 +14,8 @@ import { NotFoundError } from "@core/error"
 import { accountPath } from "@services/ledger/accounts"
 import { Transaction } from "@services/ledger/schema"
 import { baseLogger } from "../logger"
-import { caseInsensitiveRegex } from "@core/utils"
+import { caseInsensitiveRegex } from "./users"
+import { getUsernameRegex } from "@domain/users"
 
 export { Transaction }
 
@@ -63,7 +64,7 @@ invoiceUserSchema.index({ uid: 1, paid: 1 })
 
 export const InvoiceUser = mongoose.model("InvoiceUser", invoiceUserSchema)
 
-export const regexUsername = /(?!^(1|3|bc1|lnbc1))^[0-9a-z_]+$/i
+const regexUsername = getUsernameRegex()
 
 const feeRates = getFeeRates()
 
@@ -428,7 +429,7 @@ UserSchema.statics.getUserByUsername = async function (username: string) {
 }
 
 UserSchema.statics.getUserByAddress = async function ({ address }) {
-  return await this.findOne({ "onchain.address": address })
+  return this.findOne({ "onchain.address": address })
 }
 
 UserSchema.statics.getActiveUsers = async function (): Promise<Array<typeof User>> {
