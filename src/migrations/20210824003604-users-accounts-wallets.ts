@@ -6,8 +6,6 @@ const users = [
   "lastConnection",
   "lastIPs",
   "language",
-  "status",
-  "role",
   "title",
   "twoFA",
 ]
@@ -45,7 +43,7 @@ const addAttributes = (collection, attrs) => {
 }
 
 module.exports = {
-  async up(db, client) {
+  async up(db) {
     await db
       .collection("users")
       .aggregate([{ $match: {} }, { $out: "users_bak" }])
@@ -90,7 +88,7 @@ module.exports = {
     })
   },
 
-  async down(db, client) {
+  async down(db) {
     await db.collection("accounts").drop()
     await db.collection("wallets").drop()
     await db.collection("users").drop()
