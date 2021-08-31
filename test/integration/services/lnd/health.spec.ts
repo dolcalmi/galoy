@@ -1,5 +1,5 @@
 import { isUp, lndStatusEvent } from "@services/lnd/health"
-import { params } from "@services/lnd/unauth"
+import { unauthenticatedParams } from "@services/lnd/auth"
 
 describe("lndHealth", () => {
   // this is a test health checks on lnd
@@ -11,6 +11,6 @@ describe("lndHealth", () => {
     lndStatusEvent.on("started", () => {
       eventFired = true
     })
-    isUp(params[0])
+    isUp(unauthenticatedParams[0])
   })
 })

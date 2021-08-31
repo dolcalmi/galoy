@@ -1,4 +1,4 @@
-import { authenticatedLndGrpc } from "lightning"
+import { authenticatedLndGrpc, unauthenticatedLndGrpc } from "lightning"
 import _ from "lodash"
 import { getLndParams } from "@config/app"
 
@@ -14,13 +14,15 @@ const isTest = require.main!.filename.indexOf(".spec.") !== -1
 // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
 const isTrigger = require.main!.filename.indexOf("trigger") !== -1
 
-export const addProps = (array) =>
+export const addProps = (array, authenticated = true) =>
   array.map((input) => {
     const socket = `${input.node}:${input.port}`
     return {
       ...input,
       socket,
-      lnd: authenticatedLndGrpc({ ...input, socket }).lnd,
+      lnd: authenticated
+        ? authenticatedLndGrpc({ ...input, socket }).lnd
+        : unauthenticatedLndGrpc({ ...input, socket }).lnd,
 
       // FIXME: should be inactive first
       // find a way to mock this up for jest
@@ -30,7 +32,8 @@ export const addProps = (array) =>
     }
   })
 
-export const params = addProps(_.sortBy(inputs, ["priority"]))
+export const params = addProps(_.sortBy(inputs, ["priority"]), true)
+export const unauthenticatedParams = addProps(_.sortBy(inputs, ["priority"]), false)
 
 export const TIMEOUT_PAYMENT = process.env.NETWORK !== "regtest" ? 45000 : 3000
 export const FEECAP = 0.02 // = 2%
