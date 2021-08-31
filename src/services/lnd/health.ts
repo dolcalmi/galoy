@@ -1,7 +1,7 @@
 import { getWalletStatus } from "lightning"
 import { baseLogger } from "@services/logger"
 
-import { params } from "./unauth"
+import { unauthenticatedParams } from "./auth"
 
 /*
 
@@ -41,7 +41,7 @@ export const isUp = async (param): Promise<void> => {
 }
 
 // launching a loop to update whether lnd are active or not
-export const activateLndHealthCheck = () => params.forEach(isUpLoop)
+export const activateLndHealthCheck = () => unauthenticatedParams.forEach(isUpLoop)
 
 class LndStatusEventEmitter extends EventEmitter {}
 export const lndStatusEvent = new LndStatusEventEmitter()
