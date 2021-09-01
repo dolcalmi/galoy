@@ -1,5 +1,10 @@
 import { isUp, lndStatusEvent } from "@services/lnd/health"
 import { unauthenticatedParams } from "@services/lnd/auth"
+import { clearAccountLocks } from "test/helpers/redis"
+
+beforeAll(async () => {
+  await clearAccountLocks()
+})
 
 describe("lndHealth", () => {
   // this is a test health checks on lnd
