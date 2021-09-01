@@ -18,33 +18,43 @@ import {
 import _ from "lodash"
 import { Logger } from "pino"
 
-import { getGaloyInstanceName, MS_PER_DAY } from "@config/app"
+import {
+  getGaloyInstanceName,
+  MS_PER_DAY,
+  ONCHAIN_LOOK_BACK_CHANNEL_UPDATE,
+} from "@config/app"
 
 import { baseLogger } from "@services/logger"
 import { ledger } from "@services/mongodb"
-import { DbMetadata, InvoiceUser } from "@services/mongoose/schema"
+import { DbMetadata } from "@services/mongoose/schema"
 
 import { DbError, LndOfflineError, ValidationInternalError } from "@core/error"
-import { LoggedError, LOOK_BACK_CHANNEL_UPDATE } from "@core/utils"
+import { LoggedError } from "@core/utils"
 
 import { FEECAP, FEEMIN, params } from "./auth"
+import { WalletInvoicesRepository } from "@services/mongoose"
 
-export const deleteExpiredInvoiceUser = () => {
+export const deleteExpiredInvoiceUser = async () => {
+  const walletInvoicesRepo = WalletInvoicesRepository()
+
   // this should be longer than the invoice validity time
-
   const delta = 90 // days
 
   const date = new Date(Date.now())
   date.setDate(date.getDate() - delta)
 
-  // TODO: assert: only paid: true invoice should be remaining here
-  // other invoiceUser should be deleted alongside deletion of lnd invoice
-  return InvoiceUser.deleteMany({ timestamp: { $lt: date } })
+  const result = await walletInvoicesRepo.deleteUnpaidOlderThan(date)
+  if (result instanceof Error) {
+    baseLogger.error({ error: result }, "error deleting expired invoices")
+    return 0
+  }
+
+  return result
 }
 
 export const deleteFailedPaymentsAllLnds = async () => {
   baseLogger.warn("only run deleteFailedPayments on lnd 0.13")
-  return await Promise.resolve()
+  return Promise.resolve()
   // try {
   //   const lnds = offchainLnds
   //   for (const { lnd } of lnds)
@@ -120,7 +130,7 @@ export async function nodeStats({ lnd }) {
 export const nodesStats = async () => {
   const data = offchainLnds.map(({ lnd }) => nodeStats({ lnd }))
   // TODO: try if we don't need a Promise.all()
-  return await Promise.all(data)
+  return Promise.all(data)
 }
 
 export async function getBosScore() {
@@ -181,7 +191,8 @@ export const getRoutingFees = async ({
 
 export const getInvoiceAttempt = async ({ lnd, id }) => {
   try {
-    return await getInvoice({ lnd, id })
+    const result = await getInvoice({ lnd, id })
+    return result
   } catch (err) {
     const invoiceNotFound = "unable to locate invoice"
     if (err.length === 3 && err[2]?.err?.details === invoiceNotFound) {
@@ -283,7 +294,7 @@ export const onChannelUpdated = async ({
 
   // TODO: dedupe from onchain
   const { current_block_height } = await getHeight({ lnd })
-  const after = Math.max(0, current_block_height - LOOK_BACK_CHANNEL_UPDATE) // this is necessary for tests, otherwise after may be negative
+  const after = Math.max(0, current_block_height - ONCHAIN_LOOK_BACK_CHANNEL_UPDATE) // this is necessary for tests, otherwise after may be negative
   const { transactions } = await getChainTransactions({ lnd, after })
   // end dedupe
 

@@ -1,25 +1,28 @@
 import assert from "assert"
-import moment from "moment"
 
 import { User } from "@services/mongoose/schema"
 import { ledger } from "@services/mongodb"
 
-import { DbError } from "./error"
+import { DbError, TwoFAError } from "./error"
 import { Balances } from "./interface"
 import { CSVAccountExport } from "./csv-account-export"
-import { sendNotification } from "./notifications/notification"
-import { MEMO_SHARING_SATS_THRESHOLD } from "@config/app"
+import { getGaloyInstanceName } from "@config/app"
+import { generateSecret, verifyToken } from "node-2fa"
+import { sendNotification } from "@services/notifications/notification"
+import * as Wallets from "@app/wallets"
 
 export abstract class UserWallet {
   static lastPrice: number
 
   // FIXME typing : https://thecodebarbarian.com/working-with-mongoose-in-typescript.html
-  user: typeof User // mongoose object
+  user: UserType // mongoose object
   readonly logger: Logger
+  readonly config: UserWalletConfig
 
-  constructor({ user, logger }) {
+  constructor({ user, logger, config }: UserWalletConstructorArgs) {
     this.user = user
     this.logger = logger
+    this.config = config
   }
 
   // async refreshUser() {
@@ -31,19 +34,13 @@ export abstract class UserWallet {
     UserWallet.lastPrice = price
   }
 
-  // this needs to be here to be able to call / chain updatePending()
-  // otherwise super.updatePending() would result in an error
-  // there may be better way to architecture this?
-
-  // we need to ignore typescript warning because even is lock is not used
-  // an input needs to be set because updatePending is being overrided
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async updatePending(lock) {
-    return await Promise.resolve()
-  }
-
   async getBalances(lock?): Promise<Balances> {
-    await this.updatePending(lock)
+    Wallets.updatePendingInvoices({
+      walletId: this.user.id as WalletId,
+      lock,
+      logger: this.logger,
+    })
+    this.updatePendingPayments(lock)
 
     // TODO: add effective ratio
     const balances = {
@@ -94,51 +91,6 @@ export abstract class UserWallet {
     balances.total_in_USD = total.filter((item) => item.id === "USD")[0].value
 
     return balances
-  }
-
-  async getRawTransactions() {
-    const { results } = await ledger.getAccountTransactions(this.user.accountPath)
-    return results
-  }
-
-  async getTransactions(): Promise<Array<ITransaction>> {
-    const rawTransactions = await this.getRawTransactions()
-
-    return rawTransactions.map((item) => {
-      const amount = item.credit - item.debit
-      const isCredit = amount > 0
-      const isValidCreditMemo = isCredit && amount >= MEMO_SHARING_SATS_THRESHOLD
-      const isDebit = !isCredit
-
-      const memoUsername = item.username
-        ? isCredit
-          ? `from ${item.username}`
-          : `to ${item.username}`
-        : null
-
-      const memoSpamFilter = (memoString) =>
-        memoString ? (isDebit || isValidCreditMemo ? memoString : null) : null
-      const memoPayer = memoSpamFilter(item.memoPayer)
-      const memo = memoSpamFilter(item.memo)
-
-      return {
-        created_at: moment(item.timestamp).unix(),
-        amount,
-        sat: item.sat,
-        usd: item.usd,
-        description: memoPayer || memo || memoUsername || item.type, // TODO remove `|| item.type` once users have upgraded
-        type: item.type,
-        hash: item.hash,
-        fee: item.fee,
-        feeUsd: item.feeUsd,
-        username: item.username,
-        // destination: TODO
-        pending: item.pending,
-        id: item._id,
-        currency: item.currency,
-        addresses: item.payee_addresses,
-      }
-    })
   }
 
   async getStringCsv() {
@@ -244,6 +196,65 @@ export abstract class UserWallet {
     return usdValue
   }
 
+  generate2fa = () => {
+    const { secret, uri } = generateSecret({
+      name: getGaloyInstanceName(),
+      account: this.user.phone,
+    })
+    /*
+    { secret: 'XDQXYCP5AC6FA32FQXDGJSPBIDYNKK5W',
+      uri: 'otpauth://totp/My%20Awesome%20App:johndoe?secret=XDQXYCP5AC6FA32FQXDGJSPBIDYNKK5W&issuer=My%20Awesome%20App',
+      qr: 'https://chart.googleapis.com/chart?chs=166x166&chld=L|0&cht=qr&chl=otpauth://totp/My%20Awesome%20App:johndoe%3Fsecret=XDQXYCP5AC6FA32FQXDGJSPBIDYNKK5W%26issuer=My%20Awesome%20App'
+    }
+    */
+    return { secret, uri }
+  }
+
+  save2fa = async ({ secret, token }): Promise<boolean> => {
+    if (this.user.twoFA.secret) {
+      throw new TwoFAError("2FA is already set", { logger: this.logger })
+    }
+
+    const tokenIsValid = verifyToken(secret, token)
+
+    if (!tokenIsValid) {
+      throw new TwoFAError(undefined, { logger: this.logger })
+    }
+
+    this.user.twoFA.secret = secret
+
+    try {
+      await this.user.save()
+      return true
+    } catch (err) {
+      throw new DbError("Unable to save 2fa secret", {
+        forwardToClient: true,
+        logger: this.logger,
+        level: "error",
+        err,
+      })
+    }
+  }
+
+  delete2fa = async ({ token }): Promise<boolean> => {
+    if (!this.user.twoFA.secret || !verifyToken(this.user.twoFA.secret, token)) {
+      throw new TwoFAError(undefined, { logger: this.logger })
+    }
+
+    try {
+      this.user.twoFA.secret = undefined
+      await this.user.save()
+      return true
+    } catch (err) {
+      throw new DbError("Unable to delete 2fa secret", {
+        forwardToClient: true,
+        logger: this.logger,
+        level: "error",
+        err,
+      })
+    }
+  }
+
   sendBalance = async (): Promise<void> => {
     const { BTC: balanceSats } = await this.getBalances()
 
@@ -263,5 +274,24 @@ export abstract class UserWallet {
       title: `Your balance is $${balanceUsd} (${balanceSatsPrettified} sats)`,
       logger: this.logger,
     })
+  }
+
+  getUserLimits = async () => {
+    const remainingLimits = await Promise.all([
+      this.user.remainingTwoFALimit(),
+      this.user.remainingOnUsLimit(),
+      this.user.remainingWithdrawalLimit(),
+    ])
+
+    return {
+      remainingTwoFALimit: remainingLimits[0],
+      remainingOnUsLimit: remainingLimits[1],
+      remainingWithdrawalLimit: remainingLimits[2],
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async updatePendingPayments(lock) {
+    return Promise.resolve()
   }
 }

@@ -1,36 +1,20 @@
-import { GT } from "../index"
-import { login, requestPhoneCode } from "@core/text"
+import { GT } from "@graphql/index"
 
-import UserUpdateStatusMutation from "../types/mutations/user-update-status"
-import UserUpdateLevelMutation from "../types/mutations/user-update-level"
-import MerchantUpdateMapInfoMutation from "../types/mutations/merchant-update-map-info"
+import UserUpdateStatusMutation from "@graphql/root/mutation/user-update-status"
+import UserUpdateLevelMutation from "@graphql/root/mutation/user-update-level"
+import BusinessUpdateMapInfoMutation from "@graphql/root/mutation/business-update-map-info"
+
+import UserRequestAuthCodeMutation from "@graphql/root/mutation/user-request-auth-code"
+import UserLoginMutation from "@graphql/root/mutation/user-login"
 
 const MutationType = new GT.Object({
   name: "Mutation",
   fields: () => ({
-    requestPhoneCode: {
-      type: GT.Boolean,
-      args: {
-        phone: { type: GT.NonNull(GT.String) },
-      },
-      resolve: async (_, { phone }, { logger, ip }) => {
-        return await requestPhoneCode({ phone, logger, ip })
-      },
-    },
-    login: {
-      type: GT.String,
-      args: {
-        phone: { type: GT.NonNull(GT.String) },
-        code: { type: GT.NonNull(GT.String) },
-      },
-      resolve: async (_, { phone, code }, { logger, ip }) => {
-        const token = await login({ phone, code, logger, ip })
-        return token?.toString()
-      },
-    },
+    userRequestAuthCode: UserRequestAuthCodeMutation,
+    userLogin: UserLoginMutation,
     userUpdateStatus: UserUpdateStatusMutation,
     userUpdateLevel: UserUpdateLevelMutation,
-    merchantUpdateMapInfo: MerchantUpdateMapInfoMutation,
+    businessUpdateMapInfo: BusinessUpdateMapInfoMutation,
   }),
 })
 

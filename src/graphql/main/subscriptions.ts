@@ -1,6 +1,6 @@
-import { GT } from "../index"
+import { GT } from "@graphql/index"
 
-import LnInvoicePaymentStatusSubscription from "../types/subscriptions/ln-invoice-payment-status"
+import LnInvoicePaymentStatusSubscription from "@graphql/root/subscription/ln-invoice-payment-status"
 
 const SubscriptionType = new GT.Object({
   name: "Subscription",

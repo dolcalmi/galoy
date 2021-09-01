@@ -2,7 +2,7 @@ import { User } from "@services/mongoose/schema"
 import { baseLogger } from "@services/logger"
 
 import { NotFoundError } from "@core/error"
-import { caseInsensitiveRegex } from "@core/utils"
+import { caseInsensitiveRegex } from "@services/mongoose"
 
 const logger = baseLogger.child({ module: "admin" })
 
@@ -26,11 +26,16 @@ export const updateUserAccountStatus = async ({ uid, status }) => {
   return user
 }
 
-export const updateMerchantMapInfo = async ({ username, latitude, longitude, title }) => {
-  const user = await User.getUserByUsername(username)
+export const updateBusinessMapInfo = async ({
+  walletName,
+  latitude,
+  longitude,
+  title,
+}) => {
+  const user = await User.getUserByUsername(walletName)
 
   if (!user) {
-    throw new NotFoundError(`The user ${username} does not exist`, { logger })
+    throw new NotFoundError(`The wallet ${walletName} does not exist`, { logger })
   }
 
   user.coordinate = {

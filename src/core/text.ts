@@ -101,10 +101,13 @@ export const requestPhoneCode = async ({
     await PhoneCode.create({ phone, code, sms_provider })
 
     const sendTextArguments = { body, to: phone, logger }
+
     if (sms_provider === "twilio") {
-      await sendTwilioText(sendTextArguments)
+      const smsOk = await sendTwilioText(sendTextArguments)
+      return smsOk
     } else if (sms_provider === "smsala") {
-      await sendSMSalaText(sendTextArguments)
+      const smsOk = await sendSMSalaText(sendTextArguments)
+      return smsOk
     } else {
       // sms provider in yaml did not match any sms implementation
       return false
@@ -113,8 +116,6 @@ export const requestPhoneCode = async ({
     logger.error({ err }, "impossible to send message")
     return false
   }
-
-  return true
 }
 
 interface ILogin {
@@ -159,10 +160,14 @@ export const login = async ({
     // is it a test account?
     if (
       yamlConfig.test_accounts.findIndex((item) => item.phone === phone) !== -1 &&
-      yamlConfig.test_accounts.filter((item) => item.phone === phone)[0].code === code // TODO: change code to string everywhere
+      yamlConfig.test_accounts
+        .filter((item) => item.phone === phone)[0]
+        .code.toString() === code.toString()
     ) {
       // we are in this branch if phone is a test account + code is correct
-    } else if (codes.findIndex((item) => item.code === code) === -1) {
+    } else if (
+      codes.findIndex((item) => item.code.toString() === code.toString()) === -1
+    ) {
       // this branch is both relevant for test and non-test accounts
       // for when the code is not correct
       subLogger.warn({ phone, code }, `user enter incorrect code`)

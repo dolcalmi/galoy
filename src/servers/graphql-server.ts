@@ -11,33 +11,29 @@ import PinoHttp from "pino-http"
 import { v4 as uuidv4 } from "uuid"
 import helmet from "helmet"
 
-import { getIpConfig, getHelmetConfig } from "@config/app"
+import { getIpConfig, getHelmetConfig, JWT_SECRET } from "@config/app"
 
 import { baseLogger } from "@services/logger"
 import { redis } from "@services/redis"
 import { User } from "@services/mongoose/schema"
 
-import { AuthorizationError, IPBlacklistedError } from "@core/error"
-import { isDev, updateIPDetails, isIPBlacklisted } from "@core/utils"
+import { IPBlacklistedError } from "@core/error"
+import { updateIPDetails, isIPBlacklisted } from "@core/utils"
 import { WalletFactory } from "@core/wallet-factory"
 
-const graphqlLogger = baseLogger.child({ module: "graphql" })
+const graphqlLogger = baseLogger.child({
+  module: "graphql",
+})
 
 const ipConfig = getIpConfig()
 const helmetConfig = getHelmetConfig()
 
 export const isAuthenticated = rule({ cache: "contextual" })((parent, args, ctx) => {
-  if (ctx.uid === null) {
-    throw new AuthorizationError(undefined, {
-      logger: graphqlLogger,
-      request: ctx.request.body,
-    })
-  }
-  return true
+  return ctx.uid !== null ? true : "NOT_AUTHENTICATED"
 })
 
 export const isEditor = rule({ cache: "contextual" })((parent, args, ctx) => {
-  return ctx.user.role === "editor"
+  return ctx.user.role === "editor" ? true : "NOT_AUTHORIZED"
 })
 
 export const startApolloServer = async ({
@@ -111,7 +107,27 @@ export const startApolloServer = async ({
         graphqlLogger.error(err)
       }
 
-      return isDev ? err : new Error("Internal server error")
+      // GraphQL shield seems to have a bug around throwing a custom ApolloError
+      // This is a workaround for now
+      const isSheildError = ["NOT_AUTHENTICATED", "NOT_AUTHORIZED"].includes(err.message)
+
+      const reportErrorToCclient =
+        ["GRAPHQL_PARSE_FAILED", "GRAPHQL_VALIDATION_FAILED", "BAD_USER_INPUT"].includes(
+          err.extensions?.code,
+        ) || isSheildError
+
+      const reportedError = {
+        message: err.message,
+        locations: err.locations,
+        path: err.path,
+        code: isSheildError ? err.message : err.extensions?.code,
+      }
+
+      return reportErrorToCclient
+        ? reportedError
+        : {
+            message: `Error processing GraphQL request ${reportedError.code}`,
+          }
     },
   })
 
@@ -143,13 +159,13 @@ export const startApolloServer = async ({
     }),
   )
 
-  if (!process.env.JWT_SECRET) {
-    throw new Error("JWT_SECRET is not set")
+  if (!JWT_SECRET) {
+    throw new Error("JWT_SECRET env variable is missing")
   }
 
   app.use(
     expressJwt({
-      secret: process.env.JWT_SECRET,
+      secret: JWT_SECRET,
       algorithms: ["HS256"],
       credentialsRequired: false,
       requestProperty: "token",
@@ -167,7 +183,7 @@ export const startApolloServer = async ({
 
   const httpServer = createServer(app)
 
-  return await new Promise((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     httpServer.listen({ port }, () => {
       if (startSubscriptionServer) {
         new SubscriptionServer(

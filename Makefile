@@ -14,7 +14,10 @@ start-admin:
 	. ./.envrc && yarn tsnd --respawn --files -r tsconfig-paths/register src/servers/graphql-admin-server.ts | yarn pino-pretty -c -l
 
 start: start-deps
-	make start-old & make start-new & make start-admin
+	make start-old & make start-new & make start-admin & make trigger
+
+trigger: start-deps
+	. ./.envrc && yarn tsnd --respawn --files -r tsconfig-paths/register src/servers/trigger.ts | yarn pino-pretty -c -l
 
 watch:
 	yarn nodemon -V -e ts,graphql -w ./src -x make start
@@ -33,8 +36,8 @@ watch-unit:
 	$(BIN_DIR)/jest --clearCache
 	NODE_ENV=test LOGLEVEL=warn $(BIN_DIR)/jest --watch --config ./test/jest-unit.config.js
 
-watch-check:
-	$(BIN_DIR)/tsc --watch  -p tsconfig-build.json --noEmit --skipLibCheck
+watch-compile:
+	$(BIN_DIR)/tsc --watch  --noEmit --skipLibCheck
 
 integration:
 	yarn test:integration

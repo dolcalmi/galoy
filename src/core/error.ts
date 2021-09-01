@@ -155,15 +155,6 @@ export class LndOfflineError extends CustomError {
   }
 }
 
-export class AuthorizationError extends CustomError {
-  constructor(
-    message = `Not authorized!`,
-    { forwardToClient = true, logger, level = "warn" as const, ...metadata },
-  ) {
-    super(message, "NOT_AUTHORIZED", { forwardToClient, logger, level, metadata })
-  }
-}
-
 export class IPBlacklistedError extends CustomError {
   constructor(
     message: string,
@@ -190,5 +181,14 @@ export class OnChainFeeEstimationError extends CustomError {
       level,
       metadata,
     })
+  }
+}
+
+export class TwoFAError extends CustomError {
+  constructor(
+    message = "Incorrect code",
+    { forwardToClient = true, logger, level = "warn" as const, ...metadata },
+  ) {
+    super(message, "2FA_ERROR", { forwardToClient, logger, level, metadata })
   }
 }

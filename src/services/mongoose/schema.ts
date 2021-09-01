@@ -5,14 +5,17 @@ import {
   getUserLimits,
   getGenericLimits,
   getFeeRates,
+  getTwoFAConfig,
+  USER_ACTIVENESS_MONTHLY_VOLUME_THRESHOLD,
   MS_PER_DAY,
   MS_PER_30_DAYs,
 } from "@config/app"
 import { NotFoundError } from "@core/error"
-import { accountPath } from "@core/ledger/accounts"
-import { Transaction } from "@core/ledger/schema"
+import { accountPath } from "@services/ledger/accounts"
+import { Transaction } from "@services/ledger/schema"
 import { baseLogger } from "../logger"
-import { caseInsensitiveRegex } from "@core/utils"
+import { caseInsensitiveRegex } from "./users"
+import { WalletNameRegex } from "@domain/wallets"
 
 export { Transaction }
 
@@ -61,11 +64,11 @@ invoiceUserSchema.index({ uid: 1, paid: 1 })
 
 export const InvoiceUser = mongoose.model("InvoiceUser", invoiceUserSchema)
 
-export const regexUsername = /(?!^(1|3|bc1|lnbc1))^[0-9a-z_]+$/i
-
 const feeRates = getFeeRates()
 
-const UserSchema = new Schema({
+const twoFAConfig = getTwoFAConfig()
+
+const UserSchema = new Schema<UserType>({
   depositFeeRatio: {
     type: Number,
     default: feeRates.depositFeeVariable,
@@ -161,7 +164,7 @@ const UserSchema = new Schema({
 
   username: {
     type: String,
-    match: [regexUsername, "Username can only have alphabets, numbers and underscores"],
+    match: [WalletNameRegex, "Username can only have alphabets, numbers and underscores"],
     minlength: 3,
     maxlength: 50,
     index: {
@@ -246,60 +249,91 @@ const UserSchema = new Schema({
     enum: ["active", "locked"],
     default: "active",
   },
+
+  twoFA: {
+    secret: {
+      type: String,
+    },
+    threshold: {
+      type: Number,
+      default: twoFAConfig.threshold,
+    },
+  },
 })
 
 // Define getter for ratioUsd
 // FIXME: this // An outer value of 'this' is shadowed by this container.
 // https://stackoverflow.com/questions/41944650/this-implicitly-has-type-any-because-it-does-not-have-a-type-annotation
-// eslint-disable-next-line no-unused-vars
 UserSchema.virtual("ratioUsd").get(function (this: typeof UserSchema) {
   return _.find(this.currencies, { id: "USD" })?.ratio ?? 0
 })
 
-// eslint-disable-next-line no-unused-vars
 UserSchema.virtual("ratioBtc").get(function (this: typeof UserSchema) {
   return _.find(this.currencies, { id: "BTC" })?.ratio ?? 0
 })
 
 // this is the accounting path in medici for this user
-// eslint-disable-next-line no-unused-vars
 UserSchema.virtual("accountPath").get(function (this: typeof UserSchema) {
   return accountPath(this._id)
 })
 
-// eslint-disable-next-line no-unused-vars
 UserSchema.virtual("oldEnoughForWithdrawal").get(function (this: typeof UserSchema) {
   const elapsed = Date.now() - this.created_at.getTime()
   const genericLimits = getGenericLimits()
   return elapsed > genericLimits.oldEnoughForWithdrawalMicroseconds
 })
 
-UserSchema.methods.limitHit = async function ({
-  on_us,
-  amount,
-}: {
-  on_us: boolean
-  amount: number
-}) {
-  const timestampYesterday = Date.now() - MS_PER_DAY
+UserSchema.virtual("twoFAEnabled").get(function (this: typeof UserSchema) {
+  return this.twoFA.secret != null
+})
 
-  const txnType = on_us
-    ? [{ type: "on_us" }, { type: "onchain_on_us" }]
-    : [{ type: { $ne: "on_us" } }]
+const getTimestampYesterday = () => Date.now() - MS_PER_DAY
+
+UserSchema.methods.remainingTwoFALimit = async function () {
+  const threshold = this.twoFA.threshold
+
+  const txnType = [
+    { type: "on_us" },
+    { type: "onchain_on_us" },
+    { type: "onchain_payment" },
+    { type: "payment" },
+  ]
+
+  const { outgoingSats } = await User.getVolume({
+    after: getTimestampYesterday(),
+    txnType,
+    accounts: this.accountPath,
+  })
+
+  return threshold - outgoingSats
+}
+
+UserSchema.methods.remainingWithdrawalLimit = async function () {
+  if (!this.oldEnoughForWithdrawal) return 0
 
   const userLimits = getUserLimits({ level: this.level })
-  const limit = on_us ? userLimits.onUsLimit : userLimits.withdrawalLimit
+  const withdrawalLimit = userLimits.withdrawalLimit
 
-  const outgoingSats =
-    (
-      await User.getVolume({
-        after: timestampYesterday,
-        txnType,
-        accounts: this.accountPath,
-      })
-    )?.outgoingSats ?? 0
+  const { outgoingSats } = await User.getVolume({
+    after: getTimestampYesterday(),
+    txnType: [{ type: "on_us" }, { type: "onchain_on_us" }],
+    accounts: this.accountPath,
+  })
 
-  return outgoingSats + amount > limit
+  return withdrawalLimit - outgoingSats
+}
+
+UserSchema.methods.remainingOnUsLimit = async function () {
+  const userLimits = getUserLimits({ level: this.level })
+  const onUsLimit = userLimits.onUsLimit
+
+  const { outgoingSats } = await User.getVolume({
+    after: getTimestampYesterday(),
+    txnType: [{ type: "on_us" }, { type: "onchain_on_us" }],
+    accounts: this.accountPath,
+  })
+
+  return onUsLimit - outgoingSats
 }
 
 UserSchema.statics.getVolume = async function ({
@@ -329,7 +363,11 @@ UserSchema.statics.getVolume = async function ({
       },
     },
   ])
-  return result
+
+  return {
+    outgoingSats: result?.outgoingSats ?? 0,
+    incomingSats: result?.incomingSats ?? 0,
+  }
 }
 
 // FIXME: for onchain wallet from multiple wallet
@@ -347,6 +385,7 @@ UserSchema.virtual("onchain_pubkey").get(function (this: typeof UserSchema) {
 // eslint-disable-next-line no-unused-vars
 UserSchema.virtual("userIsActive").get(async function (this: typeof UserSchema) {
   const timestamp30DaysAgo = Date.now() - MS_PER_30_DAYs
+  const activenessThreshold = USER_ACTIVENESS_MONTHLY_VOLUME_THRESHOLD
 
   const volume = await User.getVolume({
     after: timestamp30DaysAgo,
@@ -354,7 +393,9 @@ UserSchema.virtual("userIsActive").get(async function (this: typeof UserSchema) 
     accounts: this.accountPath,
   })
 
-  return volume?.outgoingSats > 1000 || volume?.incomingSats > 1000
+  return (
+    volume.outgoingSats > activenessThreshold || volume.incomingSats > activenessThreshold
+  )
 })
 
 UserSchema.statics.getUserByPhone = async function (phone: string) {
@@ -368,7 +409,7 @@ UserSchema.statics.getUserByPhone = async function (phone: string) {
 }
 
 UserSchema.statics.getUserByUsername = async function (username: string) {
-  if (!username.match(regexUsername)) {
+  if (!username.match(WalletNameRegex)) {
     return null
   }
 
@@ -382,7 +423,7 @@ UserSchema.statics.getUserByUsername = async function (username: string) {
 }
 
 UserSchema.statics.getUserByAddress = async function ({ address }) {
-  return await this.findOne({ "onchain.address": address })
+  return this.findOne({ "onchain.address": address })
 }
 
 UserSchema.statics.getActiveUsers = async function (): Promise<Array<typeof User>> {
@@ -401,7 +442,7 @@ UserSchema.index({
   coordinate: 1,
 })
 
-export const User = mongoose.model("User", UserSchema)
+export const User = mongoose.model<UserType>("User", UserSchema)
 
 // TODO: this DB should be capped.
 const PhoneCodeSchema = new Schema({

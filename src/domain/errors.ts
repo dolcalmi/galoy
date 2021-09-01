@@ -1,15 +1,13 @@
-class CoreError extends Error {
+class DomainError extends Error {
   name = this.constructor.name
 }
 
-export class AuthorizationError extends CoreError {}
+export class AuthorizationError extends DomainError {}
 
-export class LnInvoiceDecodeError extends CoreError {}
-
-export class LightningServiceError extends CoreError {}
-export class CouldNotDecodeReturnedPaymentRequest extends LightningServiceError {}
-export class UnknownLightningServiceError extends LightningServiceError {}
-
-export class RepositoryError extends CoreError {}
+export class RepositoryError extends DomainError {}
 export class UnknownRepositoryError extends RepositoryError {}
 export class CouldNotFindError extends RepositoryError {}
+
+export class ValidationError extends DomainError {}
+export class InvalidSatoshiAmount extends ValidationError {}
+export class InvalidWalletName extends ValidationError {}

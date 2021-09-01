@@ -1,3 +1,5 @@
+import * as Wallets from "@app/wallets"
+import { SettlementMethod, PaymentInitiationMethod, TxStatus } from "@domain/wallets"
 import {
   stringLength,
   ValidateDirectiveVisitor,
@@ -12,7 +14,7 @@ import { makeExecutableSchema } from "graphql-tools"
 import moment from "moment"
 import path from "path"
 
-import { levels, onboardingEarn, getTransactionLimits, getFeeRates } from "@config/app"
+import { getFeeRates, levels, onboardingEarn } from "@config/app"
 
 import { setupMongoConnection } from "@services/mongodb"
 import { activateLndHealthCheck } from "@services/lnd/health"
@@ -23,12 +25,17 @@ import { getCurrentPrice } from "@services/realtime-price"
 import { User } from "@services/mongoose/schema"
 
 import { addToMap, setAccountStatus, setLevel } from "@core/admin-ops"
-import { sendNotification } from "@core/notifications/notification"
+import { sendNotification } from "@services/notifications/notification"
 import { login, requestPhoneCode } from "@core/text"
-import { getWalletFromUsername } from "@core/wallet-factory"
 
 import { usernameExists } from "../domain/user"
 import { startApolloServer, isAuthenticated, isEditor } from "./graphql-server"
+import {
+  addInvoiceForRecipient,
+  addInvoice,
+  addInvoiceNoAmountForRecipient,
+  addInvoiceNoAmount,
+} from "@app/wallets"
 
 const graphqlLogger = baseLogger.child({ module: "graphql" })
 
@@ -37,6 +44,25 @@ dotenv.config()
 const commitHash = process.env.COMMITHASH
 const buildTime = process.env.BUILDTIME
 const helmRevision = process.env.HELMREVISION
+
+const translateWalletTx = (txs: WalletTransaction[]) => {
+  return txs.map((tx: WalletTransaction) => ({
+    id: tx.id,
+    amount: tx.settlementAmount,
+    description: tx.deprecated.description,
+    fee: tx.settlementFee,
+    // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date#get_the_number_of_seconds_since_the_ecmascript_epoch
+    created_at: Math.floor(tx.createdAt.getTime() / 1000),
+    usd: tx.deprecated.usd,
+    sat: tx.settlementAmount,
+    pending: tx.status == TxStatus.Pending,
+    type: tx.deprecated.type,
+    feeUsd: tx.deprecated.feeUsd,
+    hash: tx.initiationVia === PaymentInitiationMethod.Lightning ? tx.paymentHash : null,
+    addresses: tx.initiationVia === PaymentInitiationMethod.OnChain ? tx.addresses : null,
+    username: tx.settlementVia === SettlementMethod.IntraLedger ? tx.recipientId : null,
+  }))
+}
 
 const resolvers = {
   Query: {
@@ -50,6 +76,7 @@ const resolvers = {
         username,
         contacts,
         language,
+        twoFAEnabled: user.twoFAEnabled,
       }
     },
 
@@ -59,7 +86,16 @@ const resolvers = {
         id: "BTC",
         currency: "BTC",
         balance: async () => (await wallet.getBalances())["BTC"],
-        transactions: () => wallet.getTransactions(),
+        transactions: async () => {
+          const { result: txs, error } = await Wallets.getTransactionsForWalletId({
+            walletId: wallet.user.id,
+          })
+          if (error instanceof Error || txs === null) {
+            throw error
+          }
+
+          return translateWalletTx(txs)
+        },
         csv: () => wallet.getStringCsv(),
       },
     ],
@@ -71,7 +107,16 @@ const resolvers = {
       const balances = await wallet.getBalances()
 
       return {
-        transactions: wallet.getTransactions(),
+        transactions: async () => {
+          const { result: txs, error } = await Wallets.getTransactionsForWalletId({
+            walletId: wallet.user.id,
+          })
+          if (error instanceof Error || txs === null) {
+            throw error
+          }
+
+          return translateWalletTx(txs)
+        },
         balances: wallet.user.currencies.map((item) => ({
           id: item.id,
           balance: balances[item.id],
@@ -81,9 +126,9 @@ const resolvers = {
     // deprecated
     nodeStats: async () => {
       const { lnd } = getActiveLnd()
-      return await nodeStats({ lnd })
+      return nodeStats({ lnd })
     },
-    nodesStats: async () => await nodesStats(),
+    nodesStats: async () => nodesStats(),
     buildParameters: async () => {
       const { minBuildNumber, lastBuildNumber } = await getMinBuildNumber()
       return {
@@ -141,11 +186,15 @@ const resolvers = {
         id: user.username,
       }))
     },
-    usernameExists: async (_, { username }) => await usernameExists({ username }),
-    getUserDetails: async (_, { uid }) => await User.findOne({ _id: uid }),
-    noauthUpdatePendingInvoice: async (_, { hash, username }, { logger }) => {
-      const wallet = await getWalletFromUsername({ username, logger })
-      return wallet.updatePendingInvoice({ hash })
+    usernameExists: async (_, { username }) => usernameExists({ username }),
+    getUserDetails: async (_, { uid }) => User.findOne({ _id: uid }),
+    noauthUpdatePendingInvoice: async (_, { hash }, { logger }) => {
+      const result = Wallets.updatePendingInvoiceByPaymentHash({
+        paymentHash: hash,
+        logger,
+      })
+      if (result instanceof Error) throw result
+      return result
     },
     getUid: async (_, { username, phone }) => {
       const { _id: uid } = username
@@ -154,14 +203,7 @@ const resolvers = {
       return uid
     },
     getLevels: () => levels,
-    getLimits: (_, __, { user }) => {
-      const transactionLimits = getTransactionLimits({ level: user.level })
-      return {
-        oldEnoughForWithdrawal: transactionLimits.oldEnoughForWithdrawalMicroseconds,
-        withdrawal: transactionLimits.withdrawalLimit,
-        onUs: transactionLimits.onUsLimit,
-      }
-    },
+    getLimits: (_, __, { wallet }) => wallet.getUserLimits(),
     getWalletFees: () => {
       const feeRates = getFeeRates()
       return { deposit: feeRates.depositFeeVariable }
@@ -174,14 +216,18 @@ const resolvers = {
     login: async (_, { phone, code }, { logger, ip }) => ({
       token: await login({ phone, code, logger, ip }),
     }),
+    generate2fa: async (_, __, { wallet }) => wallet.generate2fa(),
+    save2fa: async (_, { secret, token }, { wallet }) =>
+      wallet.save2fa({ secret, token }),
+    delete2fa: async (_, { token }, { wallet }) => wallet.delete2fa({ token }),
     updateUser: (_, __, { wallet }) => ({
-      setUsername: async ({ username }) => await wallet.setUsername({ username }),
-      setLanguage: async ({ language }) => await wallet.setLanguage({ language }),
+      setUsername: async ({ username }) => wallet.setUsername({ username }),
+      setLanguage: async ({ language }) => wallet.setLanguage({ language }),
       updateUsername: (input) => wallet.updateUsername(input),
       updateLanguage: (input) => wallet.updateLanguage(input),
     }),
     setLevel: async (_, { uid, level }) => {
-      return await setLevel({ uid, level })
+      return setLevel({ uid, level })
     },
     updateContact: (_, __, { user }) => ({
       setName: async ({ username, name }) => {
@@ -190,23 +236,51 @@ const resolvers = {
         return true
       },
     }),
-    noauthAddInvoice: async (_, { username, value }, { logger }) => {
-      const wallet = await getWalletFromUsername({ username, logger })
-      return wallet.addInvoice({ selfGenerated: false, value })
+    noauthAddInvoice: async (_, { username, value }) => {
+      const lnInvoice =
+        value && value > 0
+          ? await addInvoiceForRecipient({
+              recipient: username,
+              amount: value,
+            })
+          : await addInvoiceNoAmountForRecipient({
+              recipient: username,
+            })
+      if (lnInvoice instanceof Error) throw lnInvoice
+      return lnInvoice.paymentRequest
     },
-    invoice: (_, __, { wallet }) => ({
-      addInvoice: async ({ value, memo }) => await wallet.addInvoice({ value, memo }),
+    invoice: (_, __, { wallet, logger }) => ({
+      addInvoice: async ({ value, memo }) => {
+        const lnInvoice =
+          value && value > 0
+            ? await addInvoice({
+                walletId: wallet.user.id,
+                amount: value,
+                memo,
+              })
+            : await addInvoiceNoAmount({
+                walletId: wallet.user.id,
+                memo,
+              })
+        if (lnInvoice instanceof Error) throw lnInvoice
+        return lnInvoice.paymentRequest
+      },
       // FIXME: move to query
-      updatePendingInvoice: async ({ hash }) =>
-        await wallet.updatePendingInvoice({ hash }),
+      updatePendingInvoice: async ({ hash }) => {
+        const result = Wallets.updatePendingInvoiceByPaymentHash({
+          paymentHash: hash,
+          logger,
+        })
+        if (result instanceof Error) throw result
+        return result
+      },
       payInvoice: async ({ invoice, amount, memo }) =>
-        await wallet.pay({ invoice, amount, memo }),
+        wallet.pay({ invoice, amount, memo }),
       payKeysendUsername: async ({ username, amount, memo }) =>
-        await wallet.pay({ username, amount, memo }),
-      getFee: async ({ amount, invoice }) =>
-        await wallet.getLightningFee({ amount, invoice }),
+        wallet.pay({ username, amount, memo }),
+      getFee: async ({ amount, invoice }) => wallet.getLightningFee({ amount, invoice }),
     }),
-    earnCompleted: async (_, { ids }, { wallet }) => await wallet.addEarn(ids),
+    earnCompleted: async (_, { ids }, { wallet }) => wallet.addEarn(ids),
     onchain: (_, __, { wallet }) => ({
       getNewAddress: () => wallet.getOnChainAddress(),
       pay: ({ address, amount, memo }) => ({
@@ -236,10 +310,10 @@ const resolvers = {
       return { success: true }
     },
     addToMap: async (_, { username, title, latitude, longitude }, { logger }) => {
-      return await addToMap({ username, title, latitude, longitude, logger })
+      return addToMap({ username, title, latitude, longitude, logger })
     },
     setAccountStatus: async (_, { uid, status }) => {
-      return await setAccountStatus({ uid, status })
+      return setAccountStatus({ uid, status })
     },
   },
 }
@@ -280,6 +354,9 @@ export async function startApolloServerForOldSchema() {
         getLevels: and(isAuthenticated, isEditor),
       },
       Mutation: {
+        generate2fa: isAuthenticated,
+        delete2fa: isAuthenticated,
+        save2fa: isAuthenticated,
         onchain: isAuthenticated,
         invoice: isAuthenticated,
         earnCompleted: isAuthenticated,
@@ -297,7 +374,7 @@ export async function startApolloServerForOldSchema() {
 
   const schema = applyMiddleware(execSchema, permissions)
 
-  return await startApolloServer({ schema, port: 4000 })
+  return startApolloServer({ schema, port: 4000 })
 }
 
 if (require.main === module) {

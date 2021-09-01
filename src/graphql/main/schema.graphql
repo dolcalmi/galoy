@@ -1,45 +1,468 @@
-type Query {
-  currentTime: Date
+type InputError implements Error {
+  message: String!
+  path: [String]
+  code: InputErrorCode!
 }
 
-scalar Date
+interface Error {
+  message: String!
+  path: [String]
+}
+
+enum InputErrorCode {
+  INVALID_INPUT
+  VALUE_TOO_SHORT
+  VALUE_TOO_LONG
+  VALUE_NOT_ALLOWED
+}
+
+type PaymentError implements Error {
+  message: String!
+  path: [String]
+  code: PaymentErrorCode!
+}
+
+enum PaymentErrorCode {
+  ACCOUNT_LOCKED
+  LIMIT_EXCEEDED
+  INSUFFICENT_BALANCE
+  INVOICE_PAID
+  NO_LIQUIDITY
+  NO_ROUTE
+}
+
+type ConsumerAccount implements Account {
+  wallets: [Wallet!]!
+  csvTransactions(walletIds: [ID!]!): String!
+}
+
+interface Account {
+  wallets: [Wallet!]!
+  csvTransactions(walletIds: [ID!]!): String!
+}
+
+interface Wallet {
+  id: ID!
+  walletCurrency: WalletCurrency!
+  balance: SignedAmount!
+  transactions(
+    """
+    Returns the items in the list that come after the specified cursor.
+    """
+    after: String
+
+    """
+    Returns the first n items from the list.
+    """
+    first: Int
+
+    """
+    Returns the items in the list that come before the specified cursor.
+    """
+    before: String
+
+    """
+    Returns the last n items from the list.
+    """
+    last: Int
+  ): TransactionConnection
+}
+
+enum WalletCurrency {
+  BTC
+}
+
+"""
+An amount (of a currency) that can be negative (i.g. in a transaction)
+"""
+scalar SignedAmount
+
+"""
+A connection to a list of items.
+"""
+type TransactionConnection {
+  """
+  Information to aid in pagination.
+  """
+  pageInfo: PageInfo!
+
+  """
+  A list of edges.
+  """
+  edges: [TransactionEdge]
+}
+
+"""
+Information about pagination in a connection.
+"""
+type PageInfo {
+  """
+  When paginating forwards, are there more items?
+  """
+  hasNextPage: Boolean!
+
+  """
+  When paginating backwards, are there more items?
+  """
+  hasPreviousPage: Boolean!
+
+  """
+  When paginating backwards, the cursor to continue.
+  """
+  startCursor: String
+
+  """
+  When paginating forwards, the cursor to continue.
+  """
+  endCursor: String
+}
+
+"""
+An edge in a connection.
+"""
+type TransactionEdge {
+  """
+  The item at the end of the edge
+  """
+  node: Transaction
+
+  """
+  A cursor for use in pagination
+  """
+  cursor: String!
+}
+
+interface Transaction {
+  id: ID!
+  initiationVia: PaymentInitiationMethod!
+  settlementVia: SettlementMethod!
+  settlementAmount: SatAmount!
+  settlementFee: SatAmount!
+  createdAt: Timestamp!
+}
+
+enum PaymentInitiationMethod {
+  WALLET_NAME
+  ON_CHAIN
+  LIGHTNING
+}
+
+enum SettlementMethod {
+  INTRA_LEDGER
+  ON_CHAIN
+  LIGHTNING
+}
+
+"""
+(Positive) Satoshi amount (i.g. quiz earning)
+"""
+scalar SatAmount
+
+"""
+Date field, serialized as the number of milliseconds since the Unix Epoch
+"""
+scalar Timestamp
+
+type BTCWallet implements Wallet {
+  id: ID!
+  walletCurrency: WalletCurrency!
+  balance: SignedAmount!
+  transactions(
+    """
+    Returns the items in the list that come after the specified cursor.
+    """
+    after: String
+
+    """
+    Returns the first n items from the list.
+    """
+    first: Int
+
+    """
+    Returns the items in the list that come before the specified cursor.
+    """
+    before: String
+
+    """
+    Returns the last n items from the list.
+    """
+    last: Int
+  ): TransactionConnection
+}
+
+type WalletNameTransaction implements Transaction {
+  id: ID!
+  initiationVia: PaymentInitiationMethod!
+  settlementVia: SettlementMethod!
+  settlementAmount: SatAmount!
+  settlementFee: SatAmount!
+  createdAt: Timestamp!
+
+  """
+  Settlement destination:
+    Could be null when originalDestination is onChain/LN
+    and the payeee does not have a WalletName
+  """
+  recipient: WalletName
+}
+
+"""
+Unique identifier of an account wallet
+"""
+scalar WalletName
+
+type OnChainTransaction implements Transaction {
+  id: ID!
+  initiationVia: PaymentInitiationMethod!
+  settlementVia: SettlementMethod!
+  settlementAmount: SatAmount!
+  settlementFee: SatAmount!
+  createdAt: Timestamp!
+  address: OnChainAddress!
+}
+
+"""
+An address for an on-chain bitcoin destination
+"""
+scalar OnChainAddress
+
+type LnTransaction implements Transaction {
+  id: ID!
+  initiationVia: PaymentInitiationMethod!
+  settlementVia: SettlementMethod!
+  settlementAmount: SatAmount!
+  settlementFee: SatAmount!
+  createdAt: Timestamp!
+  paymentHash: LnPaymentHash!
+}
+
+scalar LnPaymentHash
+
+type Query {
+  globals: Globals
+  me: User
+}
+
+type Globals {
+  nodesIds: [String!]!
+}
+
+type User {
+  id: ID!
+  phone: Phone!
+  language: Language!
+  contacts: [WalletContact!]!
+  quizQuestions: [UserQuizQuestion!]!
+  createdAt: Timestamp!
+  defaultAccount: Account!
+}
+
+"""
+Phone number which includes country code
+"""
+scalar Phone
+
+enum Language {
+  EN_US
+  ES_SV
+}
+
+type WalletContact {
+  walletName: ID!
+  alias: ContactAlias
+  transactionsCount: Int!
+}
+
+"""
+An alias name that a user can set for a wallet (with which they have transactions)
+"""
+scalar ContactAlias
+
+type UserQuizQuestion {
+  question: QuizQuestion!
+  completed: Boolean!
+}
+
+type QuizQuestion {
+  id: ID!
+
+  """
+  The earn reward in Satoshis for the quiz question
+  """
+  earnAmount: SatAmount!
+}
 
 type Mutation {
+  userRequestAuthCode(input: UserRequestAuthCodeInput!): SuccessPayload!
+  userLogin(input: UserLoginInput!): AuthTokenPayload!
+  userUpdateLanguage(input: UserUpdateLanguageInput!): UserUpdateLanguagePayload!
+  walletContactUpdateAlias(
+    input: WalletContactUpdateAliasInput!
+  ): WalletContactUpdateAliasPayload!
+  lnInvoiceFeeProbe(input: LnInvoiceFeeProbeInput!): SatAmountPayload!
+  lnNoAmountInvoiceFeeProbe(input: LnNoAmountInvoiceFeeProbeInput!): SatAmountPayload!
+  lnInvoiceCreate(input: LnInvoiceCreateInput!): LnInvoicePayload!
+  lnNoAmountInvoiceCreate(input: LnNoAmountInvoiceCreateInput!): LnNoAmountInvoicePayload!
+  lnInvoiceCreateOnBehalfOfRecipient(
+    input: LnInvoiceCreateOnBehalfOfRecipientInput!
+  ): LnInvoicePayload!
   lnNoAmountInvoiceCreateOnBehalfOfRecipient(
     input: LnNoAmountInvoiceCreateOnBehalfOfRecipientInput!
   ): LnNoAmountInvoicePayload!
+  lnInvoicePaymentSend(input: LnInvoicePaymentInput!): LnInvoicePaymentSendPayload!
+  lnNoAmountInvoicePaymentSend(
+    input: LnNoAmountInvoicePaymentInput!
+  ): LnInvoicePaymentSendPayload!
 }
 
-type LnNoAmountInvoicePayload {
-  errors: [UserError!]!
-  invoice: LnNoAmountInvoice
+type SuccessPayload {
+  errors: [Error!]!
+  success: Boolean
 }
 
-type UserError {
-  message: String!
-  fields: [String!]!
+input UserRequestAuthCodeInput {
+  phone: Phone!
 }
 
-type LnNoAmountInvoice {
-  paymentRequest: LnInvoicePaymentRequest!
-  paymentHash: LnInvoicePaymentHash!
-  paymentSecret: LnInvoicePaymentSecret!
+type AuthTokenPayload {
+  errors: [Error!]!
+  authToken: AuthToken
 }
 
-scalar LnInvoicePaymentRequest
+"""
+An authentication code valid for a single use
+"""
+scalar AuthToken
 
-scalar LnInvoicePaymentHash
+input UserLoginInput {
+  phone: Phone!
+  code: OneTimeAuthCode!
+}
 
-scalar LnInvoicePaymentSecret
+"""
+An authentication code valid for a single use
+"""
+scalar OneTimeAuthCode
 
-input LnNoAmountInvoiceCreateOnBehalfOfRecipientInput {
-  recipient: Username!
+type UserUpdateLanguagePayload {
+  errors: [Error!]!
+  user: UserDetails
+}
+
+type UserDetails {
+  id: ID!
+  phone: Phone!
+  language: Language!
+  contacts: [WalletContact!]!
+  quizQuestions: [UserQuizQuestion!]!
+  createdAt: Timestamp!
+}
+
+input UserUpdateLanguageInput {
+  language: Language!
+}
+
+type WalletContactUpdateAliasPayload {
+  errors: [Error!]!
+  user: UserDetails
+}
+
+input WalletContactUpdateAliasInput {
+  walletName: WalletName!
+  alias: ContactAlias!
+}
+
+type SatAmountPayload {
+  errors: [Error!]!
+  amount: SatAmount
+}
+
+input LnInvoiceFeeProbeInput {
+  paymentRequest: LnPaymentRequest!
+}
+
+"""
+BOLT11 lightning invoice payment request with the amount included
+"""
+scalar LnPaymentRequest
+
+input LnNoAmountInvoiceFeeProbeInput {
+  paymentRequest: LnPaymentRequest!
+  amount: SatAmount!
+}
+
+type LnInvoicePayload {
+  errors: [Error!]!
+  invoice: LnInvoice
+}
+
+type LnInvoice {
+  paymentRequest: LnPaymentRequest!
+  paymentHash: LnPaymentHash!
+  paymentSecret: LnPaymentSecret!
+  satoshis: SatAmount
+}
+
+scalar LnPaymentSecret
+
+input LnInvoiceCreateInput {
+  amount: SatAmount!
   memo: Memo
 }
 
-scalar Username
-
+"""
+Text field in a lightning payment transaction
+"""
 scalar Memo
+
+type LnNoAmountInvoicePayload {
+  errors: [Error!]!
+  invoice: LnNoAmountInvoice
+}
+
+type LnNoAmountInvoice {
+  paymentRequest: LnPaymentRequest!
+  paymentHash: LnPaymentHash!
+  paymentSecret: LnPaymentSecret!
+}
+
+input LnNoAmountInvoiceCreateInput {
+  memo: Memo
+}
+
+input LnInvoiceCreateOnBehalfOfRecipientInput {
+  recipient: WalletName!
+  amount: SatAmount!
+  memo: Memo
+}
+
+input LnNoAmountInvoiceCreateOnBehalfOfRecipientInput {
+  recipient: WalletName!
+  memo: Memo
+}
+
+type LnInvoicePaymentSendPayload {
+  errors: [Error!]!
+  status: LnPaymentSendResult
+}
+
+enum LnPaymentSendResult {
+  SUCCESS
+  FAILURE
+  PENDING
+  ALREADY_PAID
+}
+
+input LnInvoicePaymentInput {
+  paymentRequest: LnPaymentRequest!
+  memo: Memo
+}
+
+input LnNoAmountInvoicePaymentInput {
+  paymentRequest: LnPaymentRequest!
+  amount: SatAmount!
+  memo: Memo
+}
 
 type Subscription {
   lnInvoicePaymentStatus(
@@ -48,7 +471,7 @@ type Subscription {
 }
 
 type LnInvoicePaymentStatusPayload {
-  errors: [UserError!]!
+  errors: [Error!]!
   status: InvoicePaymentStatus
 }
 
@@ -58,6 +481,5 @@ enum InvoicePaymentStatus {
 }
 
 input LnInvoicePaymentStatusInput {
-  paymentRequest: LnInvoicePaymentRequest!
-  lookupToken: String!
+  paymentRequest: LnPaymentRequest!
 }

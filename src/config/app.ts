@@ -8,6 +8,9 @@ import { baseLogger } from "@services/logger"
 const defaultContent = fs.readFileSync("./default.yaml", "utf8")
 export const defaultConfig = yaml.load(defaultContent)
 
+export const JWT_SECRET = process.env.JWT_SECRET
+export const BTC_NETWORK = process.env.NETWORK as BtcNetwork
+
 export const MS_PER_HOUR = 60 * 60 * 1000
 export const MS_PER_DAY = 24 * MS_PER_HOUR
 export const MS_PER_30_DAYs = 30 * MS_PER_DAY
@@ -29,7 +32,16 @@ try {
 export const yamlConfig = _.merge(defaultConfig, customConfig)
 
 export const MEMO_SHARING_SATS_THRESHOLD = yamlConfig.limits.memoSharingSatsThreshold
+
 export const ONCHAIN_MIN_CONFIRMATIONS = yamlConfig.onChainWallet.minConfirmations
+// how many block are we looking back for getChainTransactions
+export const ONCHAIN_LOOK_BACK = yamlConfig.onChainWallet.lookBack
+export const ONCHAIN_LOOK_BACK_OUTGOING = yamlConfig.onChainWallet.lookBackOutgoing
+export const ONCHAIN_LOOK_BACK_CHANNEL_UPDATE =
+  yamlConfig.onChainWallet.lookBackChannelUpdate
+
+export const USER_ACTIVENESS_MONTHLY_VOLUME_THRESHOLD =
+  yamlConfig.userActivenessMonthlyVolumeThreshold
 
 export const getGaloyInstanceName = (): string => yamlConfig.name
 
@@ -144,6 +156,7 @@ export const getIpConfig = (config = yamlConfig): IpConfig => ({
 })
 
 export const getHelmetConfig = (config = yamlConfig): HelmetConfig => config.helmet
+export const getTwoFAConfig = (config = yamlConfig): TwoFAConfig => config.twoFA
 
 export const levels: Levels = [1, 2]
 

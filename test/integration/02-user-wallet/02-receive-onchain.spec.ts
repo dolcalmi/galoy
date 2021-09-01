@@ -4,7 +4,7 @@ import { baseLogger } from "@services/logger"
 import { getUserLimits } from "@config/app"
 import { getCurrentPrice } from "@services/realtime-price"
 import { btc2sat, sat2btc, sleep } from "@core/utils"
-import { getTitle } from "@core/notifications/payment"
+import { getTitle } from "@services/notifications/payment"
 import { onchainTransactionEventHandler } from "@servers/trigger"
 import {
   checkIsBalanced,
@@ -20,6 +20,8 @@ import {
   amountAfterFeeDeduction,
 } from "test/helpers"
 import { getWalletFromRole } from "@core/wallet-factory"
+import * as Wallets from "@app/wallets"
+import { TxStatus } from "@domain/wallets"
 
 jest.mock("@services/realtime-price", () => require("test/mocks/realtime-price"))
 jest.mock("@services/phone-provider", () => require("test/mocks/phone-provider"))
@@ -32,9 +34,9 @@ let amountBTC
 
 const userLimits = getUserLimits({ level: 1 })
 
-jest.mock("@core/notifications/notification")
+jest.mock("@services/notifications/notification")
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const { sendNotification } = require("@core/notifications/notification")
+const { sendNotification } = require("@services/notifications/notification")
 
 beforeAll(async () => {
   walletUser0 = await getUserWallet(0)
@@ -115,8 +117,10 @@ describe("UserWallet - On chain", () => {
     await waitUntilBlockHeight({ lnd: lndonchain })
 
     // this is done by trigger and/or cron in prod
-    await walletUser0.updateOnchainReceipt()
-    await walletUser4.updateOnchainReceipt()
+    const result = await Wallets.updateOnChainReceipt({ logger: baseLogger })
+    if (result instanceof Error) {
+      throw result
+    }
 
     {
       const { BTC: balance0 } = await walletUser0.getBalances()
@@ -151,11 +155,19 @@ describe("UserWallet - On chain", () => {
 
     await sleep(1000)
 
-    const txs = await walletUser0.getTransactions()
-    const pendingTxs = filter(txs, { pending: true })
+    const { result: txs, error } = await Wallets.getTransactionsForWalletId({
+      walletId: walletUser0.user.id,
+    })
+    if (error instanceof Error || txs === null) {
+      throw error
+    }
+    const pendingTxs = filter(txs, { status: TxStatus.Pending })
     expect(pendingTxs.length).toBe(1)
-    expect(pendingTxs[0].amount).toBe(btc2sat(amountBTC))
-    expect(pendingTxs[0].addresses[0]).toBe(address)
+
+    const pendingTx = pendingTxs[0] as WalletOnChainTransaction
+    expect(pendingTx.settlementVia).toBe("onchain")
+    expect(pendingTx.settlementAmount).toBe(btc2sat(amountBTC))
+    expect(pendingTx.addresses[0]).toBe(address)
 
     await sleep(1000)
 
@@ -209,7 +221,12 @@ async function sendToWallet({ walletDestination }) {
   const lnd = lndonchain
 
   const { BTC: initialBalance } = await walletDestination.getBalances()
-  const initTransactions = await walletDestination.getTransactions()
+  const { result: initTransactions, error } = await Wallets.getTransactionsForWalletId({
+    walletId: walletDestination.user.id,
+  })
+  if (error instanceof Error || initTransactions === null) {
+    throw error
+  }
 
   const address = await walletDestination.getOnChainAddress()
   expect(address.substr(0, 4)).toBe("bcrt")
@@ -225,7 +242,10 @@ async function sendToWallet({ walletDestination }) {
 
     await waitUntilBlockHeight({ lnd })
     // this is done by trigger and/or cron in prod
-    await walletDestination.updateOnchainReceipt()
+    const result = await Wallets.updateOnChainReceipt({ logger: baseLogger })
+    if (result instanceof Error) {
+      throw result
+    }
 
     const { BTC: balance } = await walletDestination.getBalances()
     expect(balance).toBe(
@@ -236,18 +256,25 @@ async function sendToWallet({ walletDestination }) {
         }),
     )
 
-    const transactions = await walletDestination.getTransactions()
+    const { result: transactions, error } = await Wallets.getTransactionsForWalletId({
+      walletId: walletDestination.user.id as WalletId,
+    })
+    if (error instanceof Error || transactions === null) {
+      throw error
+    }
 
     expect(transactions.length).toBe(initTransactions.length + 1)
-    expect(transactions[0].type).toBe("onchain_receipt")
-    expect(transactions[0].fee).toBe(Math.round(transactions[0].fee))
-    expect(transactions[0].amount).toBe(
+
+    const txn = transactions[0] as WalletOnChainTransaction
+    expect(txn.settlementVia).toBe("onchain")
+    expect(txn.settlementFee).toBe(Math.round(txn.settlementFee))
+    expect(txn.settlementAmount).toBe(
       amountAfterFeeDeduction({
         amount: amountBTC,
         depositFeeRatio: walletDestination.user.depositFeeRatio,
       }),
     )
-    expect(transactions[0].addresses[0]).toBe(address)
+    expect(txn.addresses[0]).toBe(address)
   }
 
   // just to improve performance

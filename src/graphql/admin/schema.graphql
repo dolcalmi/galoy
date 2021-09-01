@@ -1,7 +1,7 @@
 type Query {
   allLevels: [AccountLevel!]!
-  userDetailsByPhone(phone: Phone!): UserDetails!
-  userDetailsByUsername(username: Username!): UserDetails!
+  userDetailsByPhone(phone: Phone!): User!
+  userDetailsByUsername(username: WalletName!): User!
 }
 
 enum AccountLevel {
@@ -9,20 +9,63 @@ enum AccountLevel {
   TWO
 }
 
-type UserDetails {
+type User {
   id: ID!
-  username: Username
   phone: Phone!
+  language: Language!
+  contacts: [WalletContact!]!
+  quizQuestions: [UserQuizQuestion!]!
+  createdAt: Timestamp!
   level: AccountLevel
   status: AccountStatus
   title: String
   coordinates: Coordinates
-  createdAt: Date!
 }
 
-scalar Username
-
+"""
+Phone number which includes country code
+"""
 scalar Phone
+
+enum Language {
+  EN_US
+  ES_SV
+}
+
+type WalletContact {
+  walletName: ID!
+  alias: ContactAlias
+  transactionsCount: Int!
+}
+
+"""
+An alias name that a user can set for a wallet (with which they have transactions)
+"""
+scalar ContactAlias
+
+type UserQuizQuestion {
+  question: QuizQuestion!
+  completed: Boolean!
+}
+
+type QuizQuestion {
+  id: ID!
+
+  """
+  The earn reward in Satoshis for the quiz question
+  """
+  earnAmount: SatAmount!
+}
+
+"""
+(Positive) Satoshi amount (i.g. quiz earning)
+"""
+scalar SatAmount
+
+"""
+Date field, serialized as the number of milliseconds since the Unix Epoch
+"""
+scalar Timestamp
 
 enum AccountStatus {
   LOCKED
@@ -34,24 +77,56 @@ type Coordinates {
   latitude: Float!
 }
 
-scalar Date
+"""
+Unique identifier of an account wallet
+"""
+scalar WalletName
 
 type Mutation {
-  requestPhoneCode(phone: String!): Boolean
-  login(phone: String!, code: String!): String
+  userRequestAuthCode(input: UserRequestAuthCodeInput!): SuccessPayload!
+  userLogin(input: UserLoginInput!): AuthTokenPayload!
   userUpdateStatus(input: UserUpdateStatusInput!): UserDetailPayload!
   userUpdateLevel(input: UserUpdateLevelInput!): UserDetailPayload!
-  merchantUpdateMapInfo(input: MerchanUpdateMapInfoInput!): UserDetailPayload!
+  businessUpdateMapInfo(input: BusinessUpdateMapInfoInput!): UserDetailPayload!
 }
+
+type SuccessPayload {
+  errors: [Error!]!
+  success: Boolean
+}
+
+interface Error {
+  message: String!
+  path: [String]
+}
+
+input UserRequestAuthCodeInput {
+  phone: Phone!
+}
+
+type AuthTokenPayload {
+  errors: [Error!]!
+  authToken: AuthToken
+}
+
+"""
+An authentication code valid for a single use
+"""
+scalar AuthToken
+
+input UserLoginInput {
+  phone: Phone!
+  code: OneTimeAuthCode!
+}
+
+"""
+An authentication code valid for a single use
+"""
+scalar OneTimeAuthCode
 
 type UserDetailPayload {
-  errors: [UserError!]!
-  userDetails: UserDetails
-}
-
-type UserError {
-  message: String!
-  fields: [String!]!
+  errors: [Error!]!
+  userDetails: User
 }
 
 input UserUpdateStatusInput {
@@ -64,8 +139,8 @@ input UserUpdateLevelInput {
   level: AccountLevel!
 }
 
-input MerchanUpdateMapInfoInput {
-  username: Username!
+input BusinessUpdateMapInfoInput {
+  walletName: WalletName!
   title: String!
   longitude: Float!
   latitude: Float!

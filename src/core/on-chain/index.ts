@@ -9,9 +9,8 @@ import {
   sendToChainAddress,
 } from "lightning"
 import _ from "lodash"
-import moment from "moment"
+import { verifyToken } from "node-2fa"
 
-import { bitcoindDefaultClient } from "@services/bitcoind"
 import { getActiveOnchainLnd, getLndFromPubkey } from "@services/lnd/utils"
 import { baseLogger } from "@services/logger"
 import { ledger } from "@services/mongodb"
@@ -26,19 +25,13 @@ import {
   RebalanceNeededError,
   SelfPaymentError,
   TransactionRestrictedError,
+  TwoFAError,
   ValidationInternalError,
 } from "../error"
 import { lockExtendOrThrow, redlock } from "../lock"
 import { UserWallet } from "../user-wallet"
-import {
-  amountOnVout,
-  btc2sat,
-  LoggedError,
-  LOOK_BACK,
-  LOOK_BACK_OUTGOING,
-  myOwnAddressesOnVout,
-} from "../utils"
-import { transactionNotification } from "@core/notifications/payment"
+import { LoggedError } from "../utils"
+import { ONCHAIN_LOOK_BACK, ONCHAIN_LOOK_BACK_OUTGOING } from "@config/app"
 
 export const getOnChainTransactions = async ({
   lnd,
@@ -51,7 +44,7 @@ export const getOnChainTransactions = async ({
 }) => {
   try {
     const { current_block_height } = await getHeight({ lnd })
-    const after = Math.max(0, current_block_height - (lookBack || LOOK_BACK)) // this is necessary for tests, otherwise after may be negative
+    const after = Math.max(0, current_block_height - (lookBack || ONCHAIN_LOOK_BACK)) // this is necessary for tests, otherwise after may be negative
     const { transactions } = await getChainTransactions({ lnd, after })
     return transactions.filter((tx) => incoming === !tx.is_outgoing)
   } catch (err) {
@@ -65,9 +58,9 @@ export const OnChainMixin = (superclass) =>
   class extends superclass {
     readonly config: UserWalletConfig
 
-    constructor(...args) {
-      super(...args)
-      this.config = args[0].config
+    constructor(args: UserWalletConstructorArgs) {
+      super(args)
+      this.config = args.config
     }
 
     async updatePending(lock): Promise<void> {
@@ -118,6 +111,7 @@ export const OnChainMixin = (superclass) =>
       amount,
       memo,
       sendAll = false,
+      twoFAToken,
     }: IOnChainPayment): Promise<ISuccess> {
       let onchainLogger = this.logger.child({
         topic: "payment",
@@ -145,217 +139,244 @@ export const OnChainMixin = (superclass) =>
         /// TODO: unable to check balance.total_in_BTC vs this.dustThreshold at this point...
       }
 
-      return await redlock(
-        { path: this.user._id, logger: onchainLogger },
-        async (lock) => {
-          const balance = await this.getBalances(lock)
-          onchainLogger = onchainLogger.child({ balance })
+      return redlock({ path: this.user._id, logger: onchainLogger }, async (lock) => {
+        const balance = await this.getBalances(lock)
+        onchainLogger = onchainLogger.child({ balance })
 
-          // quit early if balance is not enough
-          if (balance.total_in_BTC < amount) {
-            throw new InsufficientBalanceError(undefined, { logger: onchainLogger })
+        // quit early if balance is not enough
+        if (balance.total_in_BTC < amount) {
+          throw new InsufficientBalanceError(undefined, { logger: onchainLogger })
+        }
+
+        const payeeUser = await User.getUserByAddress({ address })
+
+        // on us onchain transaction
+        if (payeeUser) {
+          let amountToSendPayeeUser = amount
+          if (sendAll) {
+            // when sendAll the amount to send payeeUser is the whole balance
+            amountToSendPayeeUser = balance.total_in_BTC
           }
 
-          const payeeUser = await User.getUserByAddress({ address })
+          const remainingTwoFALimit = await this.user.remainingTwoFALimit()
 
-          // on us onchain transaction
-          if (payeeUser) {
-            let amountToSendPayeeUser = amount
+          if (this.user.twoFA.secret && remainingTwoFALimit < amountToSendPayeeUser) {
+            if (!twoFAToken) {
+              throw new TwoFAError("Need a 2FA code to proceed with the payment", {
+                logger: onchainLogger,
+              })
+            }
+
+            if (!verifyToken(this.user.twoFA.secret, twoFAToken)) {
+              throw new TwoFAError(undefined, { logger: onchainLogger })
+            }
+          }
+
+          const onchainLoggerOnUs = onchainLogger.child({ onUs: true })
+
+          const remainingOnUsLimit = await this.user.remainingOnUsLimit()
+
+          if (remainingOnUsLimit < amountToSendPayeeUser) {
+            const error = `Cannot transfer more than ${this.config.limits.onUsLimit} sats in 24 hours`
+            throw new TransactionRestrictedError(error, { logger: onchainLoggerOnUs })
+          }
+
+          if (String(payeeUser._id) === String(this.user._id)) {
+            throw new SelfPaymentError(undefined, { logger: onchainLoggerOnUs })
+          }
+
+          const sats = amountToSendPayeeUser
+          const metadata = {
+            type: "onchain_on_us",
+            pending: false,
+            ...UserWallet.getCurrencyEquivalent({ sats, fee: 0 }),
+            payee_addresses: [address],
+            sendAll,
+          }
+
+          await lockExtendOrThrow({ lock, logger: onchainLoggerOnUs }, async () => {
+            const tx = await ledger.addOnUsPayment({
+              description: "",
+              sats,
+              metadata,
+              payerUser: this.user,
+              payeeUser,
+              memoPayer: memo,
+              shareMemoWithPayee: false,
+              lastPrice: UserWallet.lastPrice,
+            })
+            return tx
+          })
+
+          onchainLoggerOnUs.info(
+            { success: true, ...metadata },
+            "onchain payment succeed",
+          )
+
+          return true
+        }
+
+        // normal onchain payment path
+
+        onchainLogger = onchainLogger.child({ onUs: false })
+
+        if (!this.user.oldEnoughForWithdrawal) {
+          const error = `New accounts have to wait ${this.config.limits.oldEnoughForWithdrawalHours}h before withdrawing`
+          throw new NewAccountWithdrawalError(error, { logger: onchainLogger })
+        }
+
+        /// when sendAll the amount is closer to the final one by deducting the withdrawFee
+        const checksAmount = sendAll
+          ? balance.total_in_BTC - this.user.withdrawFee
+          : amount
+
+        if (checksAmount < this.config.dustThreshold) {
+          throw new DustAmountError(undefined, { logger: onchainLogger })
+        }
+
+        const remainingWithdrawalLimit = await this.user.remainingWithdrawalLimit()
+
+        if (remainingWithdrawalLimit < checksAmount) {
+          const error = `Cannot withdraw more than ${this.config.limits.withdrawalLimit} sats in 24 hours`
+          throw new TransactionRestrictedError(error, { logger: onchainLogger })
+        }
+
+        const remainingTwoFALimit = await this.user.remainingTwoFALimit()
+
+        if (this.user.twoFA.secret && remainingTwoFALimit < checksAmount) {
+          if (!twoFAToken) {
+            throw new TwoFAError("Need a 2FA code to proceed with the payment", {
+              logger: onchainLogger,
+            })
+          }
+
+          if (!verifyToken(this.user.twoFA.secret, twoFAToken)) {
+            throw new TwoFAError(undefined, { logger: onchainLogger })
+          }
+        }
+
+        const { lnd } = getActiveOnchainLnd()
+
+        const { chain_balance: onChainBalance } = await getChainBalance({ lnd })
+
+        let estimatedFee, id, amountToSend
+
+        const sendTo = [{ address, tokens: checksAmount }]
+
+        try {
+          ;({ fee: estimatedFee } = await getChainFeeEstimate({ lnd, send_to: sendTo }))
+        } catch (err) {
+          const error = `Unable to estimate fee for on-chain transaction`
+          onchainLogger.error({ err, sendTo, success: false }, error)
+          throw new LoggedError(error)
+        }
+
+        if (!sendAll) {
+          amountToSend = amount
+
+          // case where there is not enough money available within lnd on-chain wallet
+          if (onChainBalance < amountToSend + estimatedFee) {
+            // TODO: add a page to initiate the rebalancing quickly
+            throw new RebalanceNeededError(undefined, {
+              logger: onchainLogger,
+              onChainBalance,
+              amount: amountToSend,
+              sendAll,
+              estimatedFee,
+              sendTo,
+              success: false,
+            })
+          }
+
+          // case where the user doesn't have enough money
+          if (
+            balance.total_in_BTC <
+            amountToSend + estimatedFee + this.user.withdrawFee
+          ) {
+            throw new InsufficientBalanceError(undefined, { logger: onchainLogger })
+          }
+        }
+        // when sendAll the amount to sendToChainAddress is the whole balance minus the fees
+        else {
+          amountToSend = balance.total_in_BTC - estimatedFee - this.user.withdrawFee
+
+          // case where there is not enough money available within lnd on-chain wallet
+          if (onChainBalance < amountToSend) {
+            // TODO: add a page to initiate the rebalancing quickly
+            throw new RebalanceNeededError(undefined, {
+              logger: onchainLogger,
+              onChainBalance,
+              amount: amountToSend,
+              sendAll,
+              estimatedFee,
+              sendTo,
+              success: false,
+            })
+          }
+
+          // case where the user doesn't have enough money (fees are more than the whole balance)
+          if (amountToSend < 0) {
+            throw new InsufficientBalanceError(undefined, { logger: onchainLogger })
+          }
+        }
+
+        return lockExtendOrThrow({ lock, logger: onchainLogger }, async () => {
+          try {
+            ;({ id } = await sendToChainAddress({ address, lnd, tokens: amountToSend }))
+          } catch (err) {
+            onchainLogger.error(
+              { err, address, tokens: amountToSend, success: false },
+              "Impossible to sendToChainAddress",
+            )
+            return false
+          }
+
+          let fee
+          try {
+            const outgoingOnchainTxns = await getOnChainTransactions({
+              lnd,
+              incoming: false,
+              lookBack: ONCHAIN_LOOK_BACK_OUTGOING,
+            })
+            const [{ fee: fee_ }] = outgoingOnchainTxns.filter((tx) => tx.id === id)
+            fee = fee_
+          } catch (err) {
+            onchainLogger.fatal({ err }, "impossible to get fee for onchain payment")
+            fee = 0
+          }
+
+          fee += this.user.withdrawFee
+
+          {
+            let sats = amount + fee
             if (sendAll) {
-              // when sendAll the amount to send payeeUser is the whole balance
-              amountToSendPayeeUser = balance.total_in_BTC
+              // when sendAll the amount debited from the account is the whole balance
+              sats = balance.total_in_BTC
             }
 
-            const onchainLoggerOnUs = onchainLogger.child({ onUs: true })
-
-            if (
-              await this.user.limitHit({ on_us: true, amount: amountToSendPayeeUser })
-            ) {
-              const error = `Cannot transfer more than ${this.config.limits.onUsLimit} sats in 24 hours`
-              throw new TransactionRestrictedError(error, { logger: onchainLoggerOnUs })
-            }
-
-            if (String(payeeUser._id) === String(this.user._id)) {
-              throw new SelfPaymentError(undefined, { logger: onchainLoggerOnUs })
-            }
-
-            const sats = amountToSendPayeeUser
             const metadata = {
-              type: "onchain_on_us",
-              pending: false,
-              ...UserWallet.getCurrencyEquivalent({ sats, fee: 0 }),
-              payee_addresses: [address],
+              hash: id,
+              ...UserWallet.getCurrencyEquivalent({ sats, fee }),
               sendAll,
             }
 
-            await lockExtendOrThrow({ lock, logger: onchainLoggerOnUs }, async () => {
-              const tx = await ledger.addOnUsPayment({
-                description: "",
-                sats,
-                metadata,
-                payerUser: this.user,
-                payeeUser,
-                memoPayer: memo,
-                shareMemoWithPayee: false,
-                lastPrice: UserWallet.lastPrice,
-              })
-              return tx
+            await ledger.addOnchainPayment({
+              description: memo,
+              sats,
+              fee: this.user.withdrawFee,
+              account: this.user.accountPath,
+              metadata,
             })
 
-            onchainLoggerOnUs.info(
+            onchainLogger.info(
               { success: true, ...metadata },
-              "onchain payment succeed",
+              "successful onchain payment",
             )
-
-            return true
           }
 
-          // normal onchain payment path
-
-          onchainLogger = onchainLogger.child({ onUs: false })
-
-          if (!this.user.oldEnoughForWithdrawal) {
-            const error = `New accounts have to wait ${this.config.limits.oldEnoughForWithdrawalHours}h before withdrawing`
-            throw new NewAccountWithdrawalError(error, { logger: onchainLogger })
-          }
-
-          /// when sendAll the amount is closer to the final one by deducting the withdrawFee
-          const checksAmount = sendAll
-            ? balance.total_in_BTC - this.user.withdrawFee
-            : amount
-
-          if (checksAmount < this.config.dustThreshold) {
-            throw new DustAmountError(undefined, { logger: onchainLogger })
-          }
-
-          if (await this.user.limitHit({ on_us: false, amount: checksAmount })) {
-            const error = `Cannot withdraw more than ${this.config.limits.withdrawalLimit} sats in 24 hours`
-            throw new TransactionRestrictedError(error, { logger: onchainLogger })
-          }
-
-          const { lnd } = getActiveOnchainLnd()
-
-          const { chain_balance: onChainBalance } = await getChainBalance({ lnd })
-
-          let estimatedFee, id, amountToSend
-
-          const sendTo = [{ address, tokens: checksAmount }]
-
-          try {
-            ;({ fee: estimatedFee } = await getChainFeeEstimate({ lnd, send_to: sendTo }))
-          } catch (err) {
-            const error = `Unable to estimate fee for on-chain transaction`
-            onchainLogger.error({ err, sendTo, success: false }, error)
-            throw new LoggedError(error)
-          }
-
-          if (!sendAll) {
-            amountToSend = amount
-
-            // case where there is not enough money available within lnd on-chain wallet
-            if (onChainBalance < amountToSend + estimatedFee) {
-              // TODO: add a page to initiate the rebalancing quickly
-              throw new RebalanceNeededError(undefined, {
-                logger: onchainLogger,
-                onChainBalance,
-                amount: amountToSend,
-                sendAll,
-                estimatedFee,
-                sendTo,
-                success: false,
-              })
-            }
-
-            // case where the user doesn't have enough money
-            if (
-              balance.total_in_BTC <
-              amountToSend + estimatedFee + this.user.withdrawFee
-            ) {
-              throw new InsufficientBalanceError(undefined, { logger: onchainLogger })
-            }
-          }
-          // when sendAll the amount to sendToChainAddress is the whole balance minus the fees
-          else {
-            amountToSend = balance.total_in_BTC - estimatedFee - this.user.withdrawFee
-
-            // case where there is not enough money available within lnd on-chain wallet
-            if (onChainBalance < amountToSend) {
-              // TODO: add a page to initiate the rebalancing quickly
-              throw new RebalanceNeededError(undefined, {
-                logger: onchainLogger,
-                onChainBalance,
-                amount: amountToSend,
-                sendAll,
-                estimatedFee,
-                sendTo,
-                success: false,
-              })
-            }
-
-            // case where the user doesn't have enough money (fees are more than the whole balance)
-            if (amountToSend < 0) {
-              throw new InsufficientBalanceError(undefined, { logger: onchainLogger })
-            }
-          }
-
-          return lockExtendOrThrow({ lock, logger: onchainLogger }, async () => {
-            try {
-              ;({ id } = await sendToChainAddress({ address, lnd, tokens: amountToSend }))
-            } catch (err) {
-              onchainLogger.error(
-                { err, address, tokens: amountToSend, success: false },
-                "Impossible to sendToChainAddress",
-              )
-              return false
-            }
-
-            let fee
-            try {
-              const outgoingOnchainTxns = await getOnChainTransactions({
-                lnd,
-                incoming: false,
-                lookBack: LOOK_BACK_OUTGOING,
-              })
-              const [{ fee: fee_ }] = outgoingOnchainTxns.filter((tx) => tx.id === id)
-              fee = fee_
-            } catch (err) {
-              onchainLogger.fatal({ err }, "impossible to get fee for onchain payment")
-              fee = 0
-            }
-
-            fee += this.user.withdrawFee
-
-            {
-              let sats = amount + fee
-              if (sendAll) {
-                // when sendAll the amount debited from the account is the whole balance
-                sats = balance.total_in_BTC
-              }
-
-              const metadata = {
-                hash: id,
-                ...UserWallet.getCurrencyEquivalent({ sats, fee }),
-                sendAll,
-              }
-
-              await ledger.addOnchainPayment({
-                description: memo,
-                sats,
-                fee: this.user.withdrawFee,
-                account: this.user.accountPath,
-                metadata,
-              })
-
-              onchainLogger.info(
-                { success: true, ...metadata },
-                "successful onchain payment",
-              )
-            }
-
-            return true
-          })
-        },
-      )
+          return true
+        })
+      })
     }
 
     async getLastOnChainAddress(): Promise<string> {
@@ -482,189 +503,5 @@ export const OnChainMixin = (superclass) =>
       }
 
       return user_matched_txs
-    }
-
-    async getTransactions() {
-      const confirmed: ITransaction[] = await super.getTransactions()
-
-      //  ({
-      //   created_at: moment(item.timestamp).unix(),
-      //   amount: item.credit - item.debit,
-      //   sat: item.sat,
-      //   usd: item.usd,
-      //   description: item.memoPayer || item.memo || item.type, // TODO remove `|| item.type` once users have upgraded
-      //   type: item.type,
-      //   hash: item.hash,
-      //   fee: item.fee,
-      //   feeUsd: item.feeUsd,
-      //   // destination: TODO
-      //   pending: item.pending,
-      //   id: item._id,
-      //   currency: item.currency
-      //  })
-
-      // TODO: should have outgoing unconfirmed transaction as well.
-      // they are in ledger, but not necessarily confirmed
-
-      let unconfirmed_user: GetChainTransactionsResult["transactions"] = []
-
-      try {
-        unconfirmed_user = await this.getOnchainReceipt({ confirmed: false })
-      } catch (err) {
-        baseLogger.warn({ user: this.user }, "impossible to fetch transactions")
-        unconfirmed_user = []
-      }
-
-      // {
-      //   block_id: undefined,
-      //   confirmation_count: undefined,
-      //   confirmation_height: undefined,
-      //   created_at: '2020-10-06T17:18:26.000Z',
-      //   description: undefined,
-      //   fee: undefined,
-      //   id: '709dcc443014d14bf906b551d60cdb814d6f98f1caa3d40dcc49688175b2146a',
-      //   is_confirmed: false,
-      //   is_outgoing: false,
-      //   output_addresses: [Array],
-      //   tokens: 100000000,
-      //   transaction: '020000000001019b5e33c844cc72b093683cec8f743f1ddbcf075077e5851cc8a598a844e684850100000000feffffff022054380c0100000016001499294eb1f4936f15472a891ba400dc09bfd0aa7b00e1f505000000001600146107c29ed16bf7712347ddb731af713e68f1a50702473044022016c03d070341b8954fe8f956ed1273bb3852d3b4ba0d798e090bb5fddde9321a022028dad050cac2e06fb20fad5b5bb6f1d2786306d90a1d8d82bf91e03a85e46fa70121024e3c0b200723dda6862327135ab70941a94d4f353c51f83921fcf4b5935eb80495000000'
-      // }
-
-      const unconfirmed_promises = unconfirmed_user.map(
-        async ({ transaction, id, created_at }) => {
-          const { sats, addresses } = await this.getSatsAndAddressPerTx(transaction)
-          return { sats, addresses, id, created_at }
-        },
-      )
-
-      type unconfirmedType = { sats; addresses; id; created_at }
-      const unconfirmed: unconfirmedType[] = await Promise.all(unconfirmed_promises)
-
-      return [
-        ...unconfirmed.map(({ sats, addresses, id, created_at }) => ({
-          id,
-          amount: sats,
-          pending: true,
-          created_at: moment(created_at).unix(),
-          sat: sats,
-          usd: UserWallet.satsToUsd(sats),
-          description: "pending",
-          type: "onchain_receipt" as const,
-          hash: id,
-          currency: "BTC",
-          fee: 0,
-          feeUsd: 0,
-          addresses,
-        })),
-        ...confirmed,
-      ]
-    }
-
-    // raw encoded transaction
-    async getSatsAndAddressPerTx(tx): Promise<{ sats: number; addresses: string[] }> {
-      const { vout } = await bitcoindDefaultClient.decodeRawTransaction({ hexstring: tx })
-
-      //   vout: [
-      //   {
-      //     value: 1,
-      //     n: 0,
-      //     scriptPubKey: {
-      //       asm: '0 13584315784642a24d62c7dd1073f24c60604a10',
-      //       hex: '001413584315784642a24d62c7dd1073f24c60604a10',
-      //       reqSigs: 1,
-      //       type: 'witness_v0_keyhash',
-      //       addresses: [ 'bcrt1qzdvyx9tcgep2yntzclw3quljf3sxqjsszrwx2x' ]
-      //     }
-      //   },
-      //   {
-      //     value: 46.9999108,
-      //     n: 1,
-      //     scriptPubKey: {
-      //       asm: '0 44c6e3f09c2462f9825e441a69d3f2c2325f3ab8',
-      //       hex: '001444c6e3f09c2462f9825e441a69d3f2c2325f3ab8',
-      //       reqSigs: 1,
-      //       type: 'witness_v0_keyhash',
-      //       addresses: [ 'bcrt1qgnrw8uyuy330nqj7gsdxn5ljcge97w4cu4c7m0' ]
-      //     }
-      //   }
-      // ]
-
-      // we have to look at the precise vout because lnd sums up the value at the transaction level, not at the vout level.
-      // ie: if an attacker send 10 to user A at Galoy, and 10 to user B at galoy in a sinle transaction,
-      // both would be credited 20, unless we do the below filtering.
-      const value = amountOnVout({ vout, addresses: this.user.onchain_addresses })
-      const sats = btc2sat(value)
-
-      const addresses = myOwnAddressesOnVout({
-        vout,
-        addresses: this.user.onchain_addresses,
-      })
-
-      return { sats, addresses }
-    }
-
-    async updateOnchainReceipt(lock?) {
-      const user_matched_txs = await this.getOnchainReceipt({ confirmed: true })
-
-      const type = "onchain_receipt"
-
-      await redlock(
-        { path: this.user._id, logger: baseLogger /* FIXME */, lock },
-        async () => {
-          // FIXME O(n) ^ 2. bad.
-          for (const matched_tx of user_matched_txs) {
-            // has the transaction has not been added yet to the user account?
-            //
-            // note: the fact we fiter with `account_path: this.user.accountPath` could create
-            // double transaction for some non customer specific wallet. ie: if the path is different
-            // for the dealer. this is fixed now but something to think about.
-            const query = { type, hash: matched_tx.id }
-            const count = await ledger.getAccountTransactionsCount(
-              this.user.accountPath,
-              query,
-            )
-
-            if (!count) {
-              const { sats, addresses } = await this.getSatsAndAddressPerTx(
-                matched_tx.transaction,
-              )
-              assert(matched_tx.tokens >= sats)
-
-              const fee = Math.round(sats * this.user.depositFeeRatio)
-
-              const metadata = {
-                hash: matched_tx.id,
-                ...UserWallet.getCurrencyEquivalent({ sats, fee }),
-                payee_addresses: addresses,
-              }
-
-              await ledger.addOnchainReceipt({
-                description: "",
-                sats,
-                fee,
-                account: this.user.accountPath,
-                metadata,
-              })
-
-              const onchainLogger = this.logger.child({
-                topic: "payment",
-                protocol: "onchain",
-                transactionType: "receipt",
-                onUs: false,
-              })
-
-              onchainLogger.info({ success: true, ...metadata })
-
-              await transactionNotification({
-                type,
-                user: this.user,
-                logger: onchainLogger,
-                amount: sats,
-                txid: matched_tx.id,
-              })
-            }
-          }
-        },
-      )
     }
   }

@@ -1,5 +1,4 @@
 import { GraphQLError } from "graphql"
-import _ from "lodash"
 import { parsePaymentRequest } from "invoices"
 import axios from "axios"
 
@@ -8,11 +7,6 @@ import { getIpConfig, PROXY_CHECK_APIKEY } from "@config/app"
 import { User } from "@services/mongoose/schema"
 
 export const isDev = process.env.NODE_ENV !== "production"
-
-// how many block are we looking back for getChainTransactions
-export const LOOK_BACK = 360
-export const LOOK_BACK_OUTGOING = 2
-export const LOOK_BACK_CHANNEL_UPDATE = 8
 
 // FIXME: super ugly hack.
 // for some reason LoggedError get casted as GraphQLError
@@ -57,21 +51,6 @@ export const addContact = async ({ uid, username }) => {
   }
 }
 
-export const amountOnVout = ({ vout, addresses }): number => {
-  // TODO: check if this is always [0], ie: there is always a single addresses for vout for lnd output
-  const addressFilter = (tx) =>
-    tx.scriptPubKey?.addresses && _.includes(addresses, tx.scriptPubKey.addresses[0])
-  return _.sumBy(_.filter(vout, addressFilter), "value")
-}
-
-export const myOwnAddressesOnVout = ({ vout, addresses }): string[] => {
-  // TODO: check if this is always [0], ie: there is always a single addresses for vout for lnd output
-  const scriptAddresses = vout
-    .filter((o) => o.scriptPubKey?.addresses)
-    .map((o) => o.scriptPubKey.addresses[0])
-  return _.intersection(_.union(scriptAddresses), addresses)
-}
-
 export const getHash = (request) => {
   return parsePaymentRequest({ request }).id
 }
@@ -96,7 +75,7 @@ export const randomIntFromInterval = (min, max) =>
   Math.floor(Math.random() * (max - min + 1) + min)
 
 export async function sleep(ms) {
-  return await new Promise((resolve) => setTimeout(resolve, ms))
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 export function timeout(delay, msg) {
@@ -115,10 +94,6 @@ export const isInvoiceAlreadyPaidError = (err) => {
     return true
   }
   return false
-}
-
-export const caseInsensitiveRegex = (input) => {
-  return new RegExp(`^${input}$`, "i")
 }
 
 // Throws an error if neither or both value1 and value2 are provided

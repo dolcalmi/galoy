@@ -21,7 +21,7 @@ export async function startApolloServerForAdminSchema() {
         userDetailsByUsername: and(isAuthenticated, isEditor),
       },
       Mutation: {
-        merchantUpdateMapInfo: and(isAuthenticated, isEditor),
+        businessUpdateMapInfo: and(isAuthenticated, isEditor),
         userUpdateLevel: and(isAuthenticated, isEditor),
         userUpdateStatus: and(isAuthenticated, isEditor),
       },
@@ -30,7 +30,7 @@ export async function startApolloServerForAdminSchema() {
   )
 
   const schema = applyMiddleware(gqlAdminSchema, permissions)
-  return await startApolloServer({ schema, port: 4001 })
+  return startApolloServer({ schema, port: 4001 })
 }
 
 if (require.main === module) {

@@ -81,7 +81,7 @@ describe("lndUtils", () => {
 
     await waitFor(async () => {
       try {
-        return await pay({ lnd: lndOutside1, request })
+        return pay({ lnd: lndOutside1, request })
       } catch (error) {
         baseLogger.warn({ error }, "pay failed. trying again.")
         return null
@@ -134,8 +134,9 @@ describe("lndUtils", () => {
 
     const invoicesCount = await InvoiceUser.countDocuments({
       timestamp: { $lt: queryDate },
+      paid: false,
     })
     const result = await deleteExpiredInvoiceUser()
-    expect(result.deletedCount).toBe(invoicesCount)
+    expect(result).toBe(invoicesCount)
   })
 })

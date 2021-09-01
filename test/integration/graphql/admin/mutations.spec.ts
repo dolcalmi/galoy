@@ -19,11 +19,9 @@ describe("GraphQLMutationRoot", () => {
         userUpdateLevel(input: { uid: "${user.id}", level: TWO}) {
           errors {
             message
-            fields
           }
           userDetails {
             id
-            username
             phone
             level
             createdAt
@@ -33,8 +31,9 @@ describe("GraphQLMutationRoot", () => {
     `
     const result = await graphql(gqlAdminSchema, query, {})
     const { errors, data } = result
+
     const updatedUser = await User.getUserByUsername("tester")
-    expect(errors).toBeNull
+    expect(errors).toBeUndefined()
     expect(updatedUser.level).toEqual(2)
     expect(data?.userUpdateLevel.userDetails.level).toEqual("TWO")
   })
@@ -45,11 +44,9 @@ describe("GraphQLMutationRoot", () => {
         userUpdateStatus(input: { uid: "${user.id}", status: LOCKED}) {
           errors {
             message
-            fields
           }
           userDetails {
             id
-            username
             phone
             level
             createdAt
@@ -60,22 +57,20 @@ describe("GraphQLMutationRoot", () => {
     const result = await graphql(gqlAdminSchema, query, {})
     const { errors, data } = result
     const updatedUser = await User.getUserByUsername("tester")
-    expect(errors).toBeNull
+    expect(errors).toBeUndefined()
     expect(data?.userUpdateStatus.userDetails.id).toEqual(updatedUser.id)
     expect(updatedUser.status).toEqual("locked")
   })
 
-  it("exposes merchantUpdateMapInfo", async () => {
+  it("exposes businessUpdateMapInfo", async () => {
     const query = `
       mutation {
-        merchantUpdateMapInfo(input: { username: "${user.username}", title: "MapTest", longitude: 1, latitude: -1 }) {
+        businessUpdateMapInfo(input: { walletName: "${user.username}", title: "MapTest", longitude: 1, latitude: -1 }) {
           errors {
             message
-            fields
           }
           userDetails {
             id
-            username
             phone
             level
             createdAt
@@ -86,8 +81,8 @@ describe("GraphQLMutationRoot", () => {
     const result = await graphql(gqlAdminSchema, query, {})
     const { errors, data } = result
     const updatedUser = await User.getUserByUsername("tester")
-    expect(errors).toBeNull
-    expect(data?.merchantUpdateMapInfo.userDetails.id).toEqual(updatedUser.id)
+    expect(errors).toBeUndefined()
+    expect(data?.businessUpdateMapInfo.userDetails.id).toEqual(updatedUser.id)
     expect(updatedUser.title).toEqual("MapTest")
     expect(updatedUser.coordinate).toEqual({ longitude: 1, latitude: -1 })
   })

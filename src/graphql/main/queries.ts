@@ -1,16 +1,12 @@
-import { GT } from "../index"
-
-import Date from "../types/scalars/date"
+import MeQuery from "@graphql/root/query/me"
+import { GT } from "@graphql/index"
+import GlobalsQuery from "@graphql/root/query/globals"
 
 const QueryType = new GT.Object({
   name: "Query",
   fields: () => ({
-    currentTime: {
-      type: Date,
-      resolve: () => {
-        return new Date().toISOString()
-      },
-    },
+    globals: GlobalsQuery,
+    me: MeQuery,
   }),
 })
 

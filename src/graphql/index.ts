@@ -3,14 +3,16 @@ import {
   GraphQLObjectType,
   GraphQLInputObjectType,
   GraphQLScalarType,
+  GraphQLEnumType,
   GraphQLString,
   GraphQLInt,
   GraphQLFloat,
-  GraphQLNonNull,
-  GraphQLList,
-  GraphQLEnumType,
-  Kind,
   GraphQLBoolean,
+  GraphQLInterfaceType,
+  GraphQLUnionType,
+  GraphQLList,
+  GraphQLNonNull,
+  Kind,
 } from "graphql"
 import { PubSub } from "graphql-subscriptions"
 
@@ -18,21 +20,33 @@ export const pubsub = new PubSub()
 
 // GraphQL Types
 export const GT = {
+  // Wrap root configurations for consistency
+  Field: (config) => config,
+
   // Wrappers/shortners
+  Interface: GraphQLInterfaceType,
+  Union: GraphQLUnionType,
+
   Scalar: GraphQLScalarType,
-  Object: GraphQLObjectType,
-  Input: GraphQLInputObjectType,
+  Enum: GraphQLEnumType,
+
+  ID: GraphQLID,
   String: GraphQLString,
   Int: GraphQLInt,
   Boolean: GraphQLBoolean,
   Float: GraphQLFloat,
-  Enum: GraphQLEnumType,
+
+  Object: GraphQLObjectType,
+  Input: GraphQLInputObjectType,
+
   NonNull: GraphQLNonNull,
-  Kind,
+  List: GraphQLList,
 
   // Commonly-used Non-nulls
   NonNullID: GraphQLNonNull(GraphQLID),
   NonNullList: (GraphQLType) => GraphQLNonNull(GraphQLList(GraphQLNonNull(GraphQLType))),
+
+  Kind,
 }
 
 export * from "./main/index"
