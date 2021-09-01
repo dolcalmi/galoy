@@ -3,14 +3,15 @@ import { unauthenticatedParams } from "@services/lnd/auth"
 
 describe("lndHealth", () => {
   // this is a test health checks on lnd
-  it("should emit on started", function () {
-    let eventFired = false
-    setTimeout(function () {
-      expect(eventFired).toBe(true)
-    }, 1000) //timeout with an error in one second
-    lndStatusEvent.on("started", () => {
-      eventFired = true
-    })
-    isUp(unauthenticatedParams[0])
+  it("should emit on started", async () => {
+    const handler = jest.fn()
+    const node = unauthenticatedParams[0]
+
+    lndStatusEvent.on("started", handler)
+    await isUp(node)
+
+    expect(handler).toBeCalledTimes(1)
+
+    lndStatusEvent.removeAllListeners()
   })
 })
