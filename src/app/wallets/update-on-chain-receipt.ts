@@ -83,6 +83,7 @@ const processTxForWallet = async (
   const liabilitiesAccountId = toLiabilitiesAccountId(wallet.id)
 
   const lockService = LockService()
+  console.warn("before onchain block", wallet.id)
   return lockService.lockWalletId({ walletId: wallet.id, logger }, async () => {
     const recorded = await ledger.isOnChainTxRecorded(liabilitiesAccountId, tx.rawTx.id)
     if (recorded instanceof Error) {

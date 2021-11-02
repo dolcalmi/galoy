@@ -22,12 +22,11 @@ import { addInvoice } from "@app/wallets"
 import { getHash } from "@core/utils"
 import { ledger } from "@services/mongodb"
 import { getTitle } from "@services/notifications/payment"
-import { getCurrentPrice } from "@services/realtime-price"
 import { TxStatus } from "@domain/wallets"
 import { getBTCBalance } from "test/helpers/wallet"
+import { PriceService } from "@services/price"
 
 jest.mock("@services/notifications/notification")
-jest.mock("@services/realtime-price", () => require("test/mocks/realtime-price"))
 jest.mock("@services/phone-provider", () => require("test/mocks/phone-provider"))
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -85,8 +84,10 @@ describe("onchainBlockEventhandler", () => {
     const initialBlock = await bitcoindClient.getBlockCount()
     const subBlocks = subscribeToBlocks({ lnd: lnd1 })
     subBlocks.on("block", async ({ height }) => {
-      await onchainBlockEventhandler({ height })
-      lastHeight = height > lastHeight ? height : lastHeight
+      if (height > lastHeight) {
+        lastHeight = height > lastHeight ? height : lastHeight
+        await onchainBlockEventhandler({ height })
+      }
       isFinalBlock = lastHeight >= initialBlock + blocksToMine
     })
 
@@ -154,7 +155,8 @@ describe("onchainBlockEventhandler", () => {
     expect(dbTx.sats).toBe(sats)
     expect(dbTx.pending).toBe(false)
 
-    const satsPrice = (await getCurrentPrice()) || 1
+    const satsPrice = await PriceService().getCurrentPrice()
+    if (satsPrice instanceof Error) throw satsPrice
     const usd = (sats * satsPrice).toFixed(2)
     expect(sendNotification.mock.calls[0][0].title).toBe(
       getTitle["paid-invoice"]({ usd, amount: sats }),

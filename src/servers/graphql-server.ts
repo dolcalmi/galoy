@@ -107,7 +107,7 @@ export const startApolloServer = async ({
       }
 
       let account: Account | null = null
-      if (apiSecret && apiSecret) {
+      if (apiKey && apiSecret) {
         const loggedInAccount = await Accounts.getAccountByApiKey(apiKey, apiSecret)
         if (loggedInAccount instanceof Error)
           throw new ApolloError("Invalid API authentication", "INVALID_AUTHENTICATION", {
