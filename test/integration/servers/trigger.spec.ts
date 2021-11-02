@@ -84,8 +84,10 @@ describe("onchainBlockEventhandler", () => {
     const initialBlock = await bitcoindClient.getBlockCount()
     const subBlocks = subscribeToBlocks({ lnd: lnd1 })
     subBlocks.on("block", async ({ height }) => {
-      await onchainBlockEventhandler({ height })
-      lastHeight = height > lastHeight ? height : lastHeight
+      if (height > lastHeight) {
+        lastHeight = height > lastHeight ? height : lastHeight
+        await onchainBlockEventhandler({ height })
+      }
       isFinalBlock = lastHeight >= initialBlock + blocksToMine
     })
 
