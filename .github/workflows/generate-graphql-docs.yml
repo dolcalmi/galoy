@@ -22,4 +22,3 @@ jobs:
         git add public/
         git commit -m "Update docs: $GITHUB_SHA"
         git push
-
