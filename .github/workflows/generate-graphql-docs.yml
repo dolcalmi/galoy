@@ -2,7 +2,7 @@ name: "Generate GraphQL Docs"
 
 on:
   push:
-    branches: [ docs ]
+    branches: [ main2 ]
 
 jobs:
   build:
