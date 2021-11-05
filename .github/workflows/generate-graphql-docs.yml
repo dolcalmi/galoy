@@ -20,5 +20,5 @@ jobs:
         git config --local user.email 'github-actions[bot]@users.noreply.github.com'
         git remote set-url origin https://${GITHUB_ACTOR}:${INPUT_GITHUB_TOKEN}@github.com/${REPOSITORY}.git
         git commit -am "Update docs: $GITHUB_SHA"
-        git push https://${GITHUB_ACTOR}:${INPUT_GITHUB_TOKEN}@github.com/${REPOSITORY}.git HEAD:docs --force
+        git push origin HEAD:docs --force
 
