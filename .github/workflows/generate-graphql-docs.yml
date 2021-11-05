@@ -18,8 +18,8 @@ jobs:
       run: |
         git config --local user.name 'github-actions[bot]'
         git config --local user.email 'github-actions[bot]@users.noreply.github.com'
-        git checkout -t origin/docs
+        git checkout -t -B docs
         git add public/
         git commit -m "Update docs: $GITHUB_SHA"
-        git push . HEAD:main2
+        git push . HEAD:docs
 
