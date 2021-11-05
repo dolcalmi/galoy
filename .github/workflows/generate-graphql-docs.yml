@@ -2,7 +2,7 @@ name: "Generate GraphQL Docs"
 
 on:
   push:
-    branches: [ main ]
+    branches: [ mainTestDocs ]
 
 jobs:
   build:
@@ -21,5 +21,5 @@ jobs:
         git checkout -t origin/docs
         git add public/
         git commit -m "Update docs: $GITHUB_SHA"
-        git push
+        git push . HEAD:main2
 
