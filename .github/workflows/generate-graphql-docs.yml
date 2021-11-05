@@ -18,8 +18,7 @@ jobs:
       run: |
         git config --local user.name 'github-actions[bot]'
         git config --local user.email 'github-actions[bot]@users.noreply.github.com'
-        git checkout -t -B docs
-        git add public/
-        git commit -m "Update docs: $GITHUB_SHA"
-        git push . HEAD
+        git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+        git commit -am "Update docs: $GITHUB_SHA"
+        git push origin docs
 
