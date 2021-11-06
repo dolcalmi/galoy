@@ -4,7 +4,7 @@ import { UserInputError } from "apollo-server-errors"
 
 const Memo = new GT.Scalar({
   name: "Memo",
-  description: "Text field in a lightning payment transaction",
+  description: "Text field in a ln payment transaction",
   parseValue(value) {
     return validMemo(value)
   },
