@@ -6,9 +6,11 @@ import { gqlAdminSchema } from "@graphql/admin"
 let user: UserRecord
 
 beforeAll(async () => {
-  user = await User.findOne({ username: "tester", phone: "+19876543210" })
-  if (!user) {
+  const user_ = await User.findOne({ username: "tester", phone: "+19876543210" })
+  if (!user_) {
     user = await User.create({ username: "tester", phone: "+19876543210" })
+  } else {
+    user = user_
   }
 })
 
