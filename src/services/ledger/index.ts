@@ -5,15 +5,12 @@
 
 // we have to import schema before medici
 // eslint-disable-next-line
-import { Transaction } from "./schema"
-
 import {
   CouldNotFindTransactionError,
   UnknownLedgerError,
   LedgerError,
   LedgerServiceError,
 } from "@domain/ledger/errors"
-
 import { toSats } from "@domain/bitcoin"
 
 import {
@@ -24,6 +21,10 @@ import {
 } from "@domain/ledger"
 
 import { addEventToCurrentSpan } from "@services/tracing"
+
+import { toObjectId } from "@services/mongoose/utils"
+
+import { Transaction } from "./schema"
 
 import * as accounts from "./accounts"
 import * as queries from "./query"
@@ -53,9 +54,11 @@ export const LedgerService = (): ILedgerService => {
     id: LedgerTransactionId,
   ): Promise<LedgerTransaction | LedgerServiceError> => {
     try {
+      const _id = toObjectId<LedgerTransactionId>(id)
+      _id
       const { results } = await MainBook.ledger({
-        account_path: liabilitiesMainAccount,
-        _id: id,
+        account_path: [liabilitiesMainAccount],
+        _id,
       })
       if (results.length === 1) {
         return translateToLedgerTx(results[0])
@@ -71,7 +74,7 @@ export const LedgerService = (): ILedgerService => {
   ): Promise<LedgerTransaction[] | LedgerServiceError> => {
     try {
       const { results } = await MainBook.ledger({
-        account_path: liabilitiesMainAccount,
+        account_path: [liabilitiesMainAccount],
         hash,
       })
       return results.map((tx) => translateToLedgerTx(tx))
@@ -654,7 +657,7 @@ export const LedgerService = (): ILedgerService => {
         { hash: paymentHash },
         { pending: false },
       )
-      return result.nModified > 0
+      return result.modifiedCount > 0
     } catch (err) {
       return new UnknownLedgerError(err)
     }

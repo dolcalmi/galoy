@@ -57,7 +57,9 @@ export const getUserRecordByTestUserIndex = async (index: number) => {
   const entry = yamlConfig.test_accounts[index]
   const phone = entry.phone as PhoneNumber
 
-  return User.findOne({ phone }) as UserRecord
+  const result = await User.findOne({ phone })
+  if (!result) throw Error("user not found")
+  return result as UserRecord
 }
 
 export const createMandatoryUsers = async () => {

@@ -274,6 +274,7 @@ const UserSchema = new Schema<UserRecord>(
 
 // this is the accounting path in medici for this user
 UserSchema.virtual("walletPath").get(function (this: typeof UserSchema) {
+  // @ts-expect-error: v1 code. to delete
   return toLiabilitiesWalletId(this.walletId)
 })
 
@@ -289,6 +290,7 @@ UserSchema.methods.remainingTwoFALimit = async function () {
     { type: "payment" },
   ]
 
+  // @ts-expect-error: v1 code. to delete
   const { outgoingSats } = await User.getVolume({
     after: getTimestampYesterday(),
     txnType,
@@ -302,6 +304,7 @@ UserSchema.methods.remainingWithdrawalLimit = async function () {
   const userLimits = getUserLimits({ level: this.level })
   const withdrawalLimit = userLimits.withdrawalLimit
 
+  // @ts-expect-error: v1 code. to delete
   const { outgoingSats } = await User.getVolume({
     after: getTimestampYesterday(),
     txnType: [{ type: "on_us" }, { type: "onchain_on_us" }],
@@ -315,6 +318,7 @@ UserSchema.methods.remainingOnUsLimit = async function () {
   const userLimits = getUserLimits({ level: this.level })
   const onUsLimit = userLimits.onUsLimit
 
+  // @ts-expect-error: v1 code. to delete
   const { outgoingSats } = await User.getVolume({
     after: getTimestampYesterday(),
     txnType: [{ type: "on_us" }, { type: "onchain_on_us" }],

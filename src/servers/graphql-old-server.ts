@@ -215,7 +215,6 @@ const resolvers = {
       )
 
       return users.map((user) => ({
-        ...user._doc,
         coordinate: user.coordinates,
         id: user.username,
       }))

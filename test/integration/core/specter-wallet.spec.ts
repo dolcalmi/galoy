@@ -49,6 +49,9 @@ describe("SpecterWallet", () => {
     expect(bitcoindBalance).toBe(initBitcoindBalance + sats)
 
     const {
+      // fee exist because we override the default set of property available on transaction
+      // but medici types doesn't know about it
+      // @ts-expect-error: TODO
       results: [{ fee }],
     } = await getBitcoindTransactions({ type: "to_cold_storage" })
 
