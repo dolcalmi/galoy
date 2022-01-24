@@ -88,9 +88,7 @@ export const WalletInvoicesRepository = (): IWalletInvoicesRepository => {
       pending = InvoiceUser.aggregate([
         { $match: { paid: false } },
         { $group: { _id: "$walletId" } },
-      ])
-        .cursor({ batchSize: 100 })
-        .exec()
+      ]).cursor({ batchSize: 100 })
     } catch (error) {
       return new RepositoryError(error)
     }

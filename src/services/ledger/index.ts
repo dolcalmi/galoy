@@ -668,7 +668,7 @@ export const LedgerService = (): ILedgerService => {
   ): Promise<boolean | LedgerServiceError> => {
     try {
       const result = await Transaction.updateMany({ hash }, { pending: false })
-      return result.nModified > 0
+      return result.modifiedCount > 0
     } catch (err) {
       return new UnknownLedgerError(err)
     }
@@ -719,9 +719,7 @@ export const LedgerService = (): ILedgerService => {
           },
         },
         { $group: { _id: "$accounts" } },
-      ])
-        .cursor({ batchSize: 100 })
-        .exec()
+      ]).cursor({ batchSize: 100 })
     } catch (error) {
       return new UnknownLedgerError(error)
     }

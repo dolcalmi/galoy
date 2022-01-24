@@ -46,12 +46,12 @@ export const PriceService = (): IPriceService => {
     const startDate = new Date(getRangeStartDate(range))
     const endDate = new Date(Date.now())
 
-    const query = [
-      { $match: { "pair.name": pair, "pair.exchange.name": exchange } },
-      { $unwind: "$pair.exchange.price" },
-      { $match: { "pair.exchange.price._id": { $gte: startDate, $lt: endDate } } },
-      {
-        $group: {
+    try {
+      const result = await PriceHistory.aggregate()
+        .match({ "pair.name": pair, "pair.exchange.name": exchange })
+        .unwind("$pair.exchange.price")
+        .match({ "pair.exchange.price._id": { $gte: startDate, $lt: endDate } })
+        .group({
           _id: {
             $toDate: {
               $subtract: [
@@ -61,13 +61,8 @@ export const PriceService = (): IPriceService => {
             },
           },
           o: { $last: "$pair.exchange.price.o" },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]
-
-    try {
-      const result = await PriceHistory.aggregate(query)
+        })
+        .sort({ _id: 1 })
       return result.map((t: { _id: Date; o: UsdPerSat }) => ({ date: t._id, price: t.o }))
     } catch (err) {
       return new UnknownPriceServiceError(err)
