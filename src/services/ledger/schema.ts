@@ -1,11 +1,46 @@
 import * as mongoose from "mongoose"
 import { LedgerTransactionType } from "@domain/ledger"
+import { IAnyObject, setTransactionSchema } from "medici"
 
 const Schema = mongoose.Schema
 
 const ledgerTransactionTypes = Object.values(LedgerTransactionType)
 
-const transactionSchema = new Schema({
+interface ITransaction {
+  _id?: mongoose.Types.ObjectId
+  credit: number
+  debit: number
+  meta?: IAnyObject
+  datetime: Date
+  account_path: string[]
+  accounts: string
+  book: string
+  memo: string
+  _journal: mongoose.Types.ObjectId
+  timestamp: Date
+  voided?: boolean
+  void_reason?: string
+  _original_journal?: mongoose.Types.ObjectId
+
+  hash?: string
+  txid?: string
+  type: LedgerTransactionType
+  pending: boolean
+  err?: string
+  currency: WalletCurrency
+  fee: number
+  feeKnownInAdvance?: boolean
+  related_journal?: mongoose.Types.ObjectId
+  payee_addresses?: string[]
+  memoPayer?: string
+  usd?: number
+  sats?: number
+  feeUsd?: number
+  username?: string
+  pubkey?: string
+}
+
+const transactionSchema = new Schema<ITransaction>({
   hash: {
     type: Schema.Types.String,
     ref: "InvoiceUser",
@@ -79,49 +114,27 @@ const transactionSchema = new Schema({
   pubkey: String,
 
   // original property from medici
-  credit: {
-    type: Number,
-    min: 0,
-  },
-  debit: {
-    type: Number,
-    min: 0,
-  },
+  credit: Number,
+  debit: Number,
   meta: Schema.Types.Mixed,
   datetime: Date,
   account_path: [String],
-  accounts: {
-    type: String,
-    validate: {
-      validator: function (v) {
-        // liabilities account should be uuid-v4
-        if (v.startsWith("Liabilities")) return v.length === 12 + 36
-        else return true
-      },
-    },
-  },
+  accounts: String,
   book: String,
   memo: String,
   _journal: {
     type: Schema.Types.ObjectId,
     ref: "Medici_Journal",
   },
-  timestamp: {
-    type: Date,
-    default: Date.now,
-  },
-  voided: {
-    type: Boolean,
-    default: false,
-  },
+  timestamp: Date,
+  voided: Boolean,
   void_reason: String,
   // The journal that this is voiding, if any
-  _original_journal: Schema.Types.ObjectId,
-  approved: {
-    type: Boolean,
-    default: true,
+  _original_journal: {
+    type: Schema.Types.ObjectId,
+    ref: "Medici_Journal",
   },
-})
+}, { id: false, versionKey: false, timestamps: false })
 
 //indexes used by our queries
 transactionSchema.index({ accounts: 1, type: 1, timestamp: -1 })
@@ -129,31 +142,6 @@ transactionSchema.index({ type: 1, pending: 1, account_path: 1 })
 transactionSchema.index({ account_path: 1 })
 transactionSchema.index({ hash: 1 })
 
-//indexes used by medici internally, and also set by default
-//we are setting them here manually because we are using a custom schema
-transactionSchema.index({ _journal: 1 })
-transactionSchema.index({
-  accounts: 1,
-  book: 1,
-  approved: 1,
-  datetime: -1,
-  timestamp: -1,
-})
-transactionSchema.index({ "account_path.0": 1, "book": 1, "approved": 1 })
-transactionSchema.index({
-  "account_path.0": 1,
-  "account_path.1": 1,
-  "book": 1,
-  "approved": 1,
-})
-// TODO: look at if this one is still needed. maybe we only have 2 levels now?
-// following this refactoring: https://github.com/GaloyMoney/galoy/pull/377
-transactionSchema.index({
-  "account_path.0": 1,
-  "account_path.1": 1,
-  "account_path.2": 1,
-  "book": 1,
-  "approved": 1,
-})
+setTransactionSchema(transactionSchema)
 
 export const Transaction = mongoose.model("Medici_Transaction", transactionSchema)
