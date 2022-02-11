@@ -192,4 +192,6 @@ export const initializeTestingState = async (stateConfig: TestingStateConfig) =>
   if (stateConfig.populatePriceData) {
     await populatePriceData()
   }
+
+  return waitUntilSyncAll()
 }
