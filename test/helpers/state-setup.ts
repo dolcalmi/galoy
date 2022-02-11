@@ -7,7 +7,9 @@ import { PriceHistory } from "@services/price/schema"
 import { toObjectId } from "@services/mongoose/utils"
 import { adminUsers } from "@domain/admin-users"
 
-import { fundLnd, mineBlockAndSyncAll } from "./lightning"
+import { fundLnd, mineBlockAndSyncAll, waitUntilSyncAll } from "./lightning"
+
+import { clearAccountLocks, clearLimiters } from "./redis"
 
 import {
   chunk,
@@ -23,7 +25,6 @@ import {
   bitcoindOutside,
   resetDatabase,
   resetLnds,
-  setChannelFees,
   openChannelTesting,
 } from "test/helpers"
 
@@ -136,7 +137,12 @@ export const initializeTestingState = async (stateConfig: TestingStateConfig) =>
 
   // Reset state
   if (stateConfig.resetState) {
-    await Promise.all([resetLnds(), resetDatabase(mongoose)])
+    await Promise.all([
+      resetLnds(),
+      resetDatabase(mongoose),
+      clearLimiters(),
+      clearAccountLocks(),
+    ])
   }
 
   // Fund outside wallet
@@ -166,22 +172,18 @@ export const initializeTestingState = async (stateConfig: TestingStateConfig) =>
 
   // Fund external lnd
   if (stateConfig.lndFunding.length > 0) {
-    const fundingPromises: Promise<void>[] = []
     for (const lndInstance of stateConfig.lndFunding) {
-      fundingPromises.push(fundLnd(lndInstance))
+      await waitUntilSyncAll()
+      await fundLnd(lndInstance)
     }
-    await Promise.all([fundLnd(lndOutside1), fundLnd(lndOutside2)])
     await mineBlockAndSyncAll()
   }
 
   // Open ln channels
   if (stateConfig.channelOpens.length > 0) {
     for (const channel of stateConfig.channelOpens) {
+      await waitUntilSyncAll()
       await openChannelTesting(channel)
-      await Promise.all([
-        setChannelFees({ lnd: channel.lnd, channel, base: 0, rate: 0 }),
-        setChannelFees({ lnd: channel.lndPartner, channel, base: 0, rate: 0 }),
-      ])
     }
     await mineBlockAndSyncAll()
   }
@@ -190,4 +192,6 @@ export const initializeTestingState = async (stateConfig: TestingStateConfig) =>
   if (stateConfig.populatePriceData) {
     await populatePriceData()
   }
+
+  return waitUntilSyncAll()
 }
