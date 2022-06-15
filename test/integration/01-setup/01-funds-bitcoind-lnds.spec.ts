@@ -77,12 +77,5 @@ describe("Bitcoind", () => {
     expect(balance).toBe(sats)
 
     await checkIsBalanced()
-
-    const balanceFunderWalletId = await LedgerService().getWalletBalance(funderWalletId)
-    balanceFunderWalletId
-    // console.log({ balanceFunderWalletId }, "funderWalletId")
-    // FIXME: this test is broken
-    // checkBalance should not be true because we received fund in lnd
-    // and this is not been credited by to balanceFunderWalletId
   })
 })

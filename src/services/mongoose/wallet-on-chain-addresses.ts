@@ -25,7 +25,7 @@ export const WalletOnChainAddressesRepository = (): IWalletOnChainAddressesRepos
       if (result.matchedCount === 0) {
         return new CouldNotFindError("Couldn't find wallet")
       }
-
+      console.warn({result})
       if (result.modifiedCount !== 1) {
         return new PersistError("Couldn't add onchain address for wallet")
       }

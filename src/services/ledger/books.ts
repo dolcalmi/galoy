@@ -6,4 +6,4 @@ import { Transaction } from "./schema"
 import { Book } from "medici"
 
 // we have to import schema before medici
-export const MainBook = new Book("MainBook")
+export const MainBook = new Book("MainBook", { balanceSnapshotSec: 0 })

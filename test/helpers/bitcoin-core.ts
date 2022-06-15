@@ -9,6 +9,7 @@ import { LedgerService } from "@services/ledger"
 import { pay } from "lightning"
 
 import { lndOutside1, waitUntilBlockHeight } from "."
+import { Wallets } from "@app"
 
 export const RANDOM_ADDRESS = "2N1AdXp9qihogpSmSBXSSfgeUFgTYyjVWqo"
 export const bitcoindClient = bitcoindDefaultClient // no wallet
@@ -89,8 +90,13 @@ export const fundWalletIdFromOnchain = async ({
   })
   await waitUntilBlockHeight({ lnd })
 
+  const result = await Wallets.updateOnChainReceipt({ logger: baseLogger })
+  if (result instanceof Error) throw result
+
   const balance = await LedgerService().getWalletBalance(walletId)
   if (balance instanceof Error) throw balance
+
+  console.warn({balance})
 }
 
 export const fundWalletIdFromLightning = async ({

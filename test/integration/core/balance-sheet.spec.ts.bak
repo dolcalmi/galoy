@@ -1,0 +1,99 @@
+import { createHash, randomBytes } from "crypto"
+
+import { addInvoice } from "@app/wallets"
+import { MS_PER_DAY } from "@config"
+import {
+  updatePendingLightningTransactions,
+  updateUsersPendingPayment,
+} from "@core/balance-sheet"
+import { toSats } from "@domain/bitcoin"
+import { LedgerService } from "@services/ledger"
+
+import {
+  createInvoice,
+  createHodlInvoice,
+  lndOutside1,
+  lndOutside2,
+  pay,
+  createChainAddress,
+  lnd1,
+  getAndCreateUserWallet,
+} from "test/helpers"
+
+const createInvoiceHash = () => {
+  const randomSecret = () => randomBytes(32)
+  const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex")
+  const secret = randomSecret()
+  const id = sha256(secret)
+  return { id, secret: secret.toString("hex") }
+}
+
+describe("balance-sheet", () => {
+  it.only("query balance", async () => {
+    const userWallet1 = await getAndCreateUserWallet(1)
+
+    const timestamp1Day = new Date(Date.now() - MS_PER_DAY)
+    const walletVolume = await LedgerService().intraledgerTxVolumeSince({
+      walletId: userWallet1.user.walletId,
+      timestamp: timestamp1Day,
+    })
+    if (walletVolume instanceof Error) return walletVolume
+    expect(walletVolume).toBe(-1)
+  })
+
+  it("pay invoice", async () => {
+    const invoice =
+      "lnbcrt10100n1ps5jptfpp5cxxpqgpedeh99mmpma2pdp4ndrmvz8lpxkkw5ehz84cezdnevtyqdqqcqzpuxqyz5vqsp5cp2ayu9axvp50qqask0mczcfx2uunj9qg75xgt5a2r5h2t4fy4xs9qyyssqvvfctqj98458hdlt9lw688fzdw7sq3j8u6xvmlajez76wfq2g26khd5ppwgsfs7ks3sad4lartzlpqldfj0xa295vffpyjvdgz2dzncq5r8n8f"
+    // on us
+    // const wallet = await getUserWallet(0)
+    // wallet.user.twoFA.secret = null
+    // await wallet.pay({ invoice })
+
+    // external
+    await pay({ lnd: lndOutside1, request: invoice })
+  })
+
+  it("get onchain address", async () => {
+    // const address = await getLastOnChainAddress("612ff7e3e46d0fe813bb1fdb" as WalletId)
+    // expect(address).toBe(false)
+    const { address } = await createChainAddress({
+      lnd: lndOutside2,
+      format: "p2wpkh",
+    })
+    expect(1).toBe(address)
+  })
+
+  it("create invoice", async () => {
+    const { id } = createInvoiceHash()
+    const { request } = await createInvoice({
+      lnd: lnd1,
+      // lnd: lndOutside2,
+      tokens: 1100,
+    })
+
+    expect(id).toBe(request)
+  })
+  it("updates pending lightning transactions", async () => {
+    // for (let i = 0; i < 15; i++) {
+    //   const wallet = await getUserWallet(i)
+    //   wallet.user.twoFA.secret = null
+    //   // await wallet.getOnChainAddress()
+    //   // const lnInvoice = await addInvoice({
+    //   //   walletId: wallet.user.id as WalletId,
+    //   //   amount: toSats(1000),
+    //   // })
+    //   // await wallet.addInvoice({ value: 1000 })
+    //   const { id } = createInvoiceHash()
+    //   const { request } = await createHodlInvoice({
+    //     id,
+    //     lnd: lndOutside1,
+    //     tokens: 100,
+    //   })
+    //   await wallet.pay({ invoice: request })
+    // }
+
+    await updatePendingLightningTransactions()
+    // await updateUsersPendingPayment({ onchainOnly: false })
+    expect(1).toBe(2)
+  })
+})
