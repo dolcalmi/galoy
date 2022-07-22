@@ -60,3 +60,24 @@ type AmountCalculator = {
     basisPoints: bigint,
   ) => PaymentAmount<T>
 }
+
+type PaginationQuery = {
+  before?: string
+  after?: string
+  first?: number
+  last?: number
+}
+
+type PaginationQueryArgs<T> = T & {
+  paginationQuery: PaginationQuery
+}
+
+type PageInfo = {
+  hasPreviousPage: boolean
+  hasNextPage: boolean
+}
+
+type PaginatedData<T> = {
+  data: T[]
+  pageInfo: PageInfo
+}

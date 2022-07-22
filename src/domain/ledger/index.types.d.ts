@@ -253,18 +253,11 @@ interface ILedgerService {
     paymentHash: PaymentHash | OnChainTxHash,
   ): Promise<LedgerTransaction<WalletCurrency>[] | LedgerServiceError>
 
-  getTransactionsByWalletId(
-    walletId: WalletId,
-  ): Promise<LedgerTransaction<WalletCurrency>[] | LedgerServiceError>
+  getTransactionsByWalletId(args: PaginationQueryArgs<{ walletId: WalletId }>): Promise<PaginatedData<LedgerTransaction<WalletCurrency>> | LedgerServiceError>
 
-  getTransactionsByWalletIds(
-    walletIds: WalletId[],
-  ): Promise<LedgerTransaction<WalletCurrency>[] | LedgerServiceError>
+  getTransactionsByWalletIds(args: PaginationQueryArgs<{ walletIds: WalletId[] }>): Promise<PaginatedData<LedgerTransaction<WalletCurrency>> | LedgerServiceError>
 
-  getTransactionsByWalletIdAndContactUsername(
-    walletId: WalletId,
-    contactUsername: Username,
-  ): Promise<LedgerTransaction<WalletCurrency>[] | LedgerServiceError>
+  getTransactionsByWalletIdAndContactUsername(args: PaginationQueryArgs<{ walletId: WalletId, contactUsername: Username}>): Promise<PaginatedData<LedgerTransaction<WalletCurrency>> | LedgerServiceError>
 
   listPendingPayments(
     walletId: WalletId,
